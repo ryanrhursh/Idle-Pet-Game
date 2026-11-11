@@ -11,6 +11,9 @@
   --chip: #f4ebdd;
   --shadow: 0 6px 24px rgba(60, 40, 80, 0.18);
   --safe-top: env(safe-area-inset-top, 0px);
+  /* iOS home-screen apps blur a strip below the status bar; when there is a
+     top safe area (notch phones), drop the HUD an extra 48px to clear it. */
+  --hud-top: calc(8px + var(--safe-top) + min(var(--safe-top), 1px) * 48);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --tabs-h: 64px;
   color-scheme: light;
@@ -36,7 +39,7 @@ html, body {
 /* ---------- HUD ---------- */
 #hud {
   position: fixed;
-  top: calc(8px + var(--safe-top));
+  top: var(--hud-top);
   left: 8px; right: 8px;
   display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
   pointer-events: none;
@@ -202,7 +205,7 @@ label select { margin: 0; }
 
 /* ---------- toasts / banner / modal ---------- */
 #toasts {
-  position: fixed; top: calc(56px + var(--safe-top)); left: 50%; transform: translateX(-50%);
+  position: fixed; top: calc(var(--hud-top) + 48px); left: 50%; transform: translateX(-50%);
   display: flex; flex-direction: column; gap: 6px; align-items: center;
   z-index: 7; pointer-events: none; width: min(92vw, 420px);
 }

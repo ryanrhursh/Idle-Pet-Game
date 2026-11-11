@@ -5,9 +5,11 @@ Every pet needs a home, a job and food. In return they work, level up and make y
 
 Runs in any modern browser on **Windows, Mac, iOS and Android**. It can be installed as an app (PWA) and played offline.
 
+**Play it:** https://ryanrhursh.github.io/Idle-Pet-Game/ (updates automatically whenever `main` changes)
+
 ## Play / develop
 
-You need [Node.js](https://nodejs.org) 20 or newer.
+You need [Node.js](https://nodejs.org) 20.19 or newer.
 
 ```bash
 npm install
@@ -61,7 +63,7 @@ All 3D models are generated from code (no asset files), so the game loads quickl
 
 ## Shipping to each platform
 
-- **Web (all platforms):** `npm run build`, then upload `dist/` to any static host (GitHub Pages, Netlify, itch.io as an HTML5 game). Players can use *Install app* (desktop Chrome/Edge) or *Add to Home Screen* (iOS Safari / Android Chrome).
+- **Web (all platforms):** already automatic. `.github/workflows/deploy.yml` tests, builds and publishes to GitHub Pages on every push to `main`. One-time setup: repo **Settings → Pages → Source: GitHub Actions**. You can also upload `dist/` to any other static host (Netlify, itch.io as an HTML5 game). Players can use *Install app* (desktop Chrome/Edge) or *Add to Home Screen* (iOS Safari / Android Chrome).
 - **App stores (iOS / Android):** wrap `dist/` with [Capacitor](https://capacitorjs.com).
 - **Desktop installers / Steam (Windows / Mac):** wrap `dist/` with [Tauri](https://tauri.app) or [Electron](https://www.electronjs.org).
 

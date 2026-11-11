@@ -38,11 +38,12 @@ Claude Code loads this file into every new session. **Keep it current:** at the 
 
 ## Status
 - v0.1 is live: core loop, 3D town, day/night, strays, eggs, Petdex, autosave + 8h offline progress, PWA.
-- Tested in headless Chromium (desktop + iPhone/Pixel emulation). **Not yet checked on a real phone.**
+- Tested in headless Chromium (desktop + iPhone/Pixel emulation). The owner plays on an iPhone (iOS 26) as a home-screen web app.
+- iOS: keep `apple-mobile-web-app-status-bar-style` = `default`. `black-translucent` put a blur over the HUD and left a status-bar-sized gap at the bottom. Headless Chromium can't reproduce iOS home-screen mode, so check these fixes on the owner's phone.
 - Known design choices you may want to revisit: production keeps running at night while pets sleep; a new game has no coin income until a Market is built (the welcome tip says so).
 
 ## Next up (ideas; the owner picks)
-- Owner playtest feedback on a real phone
+- More playtest feedback from the owner's iPhone
 - Sound effects + music
 - Quests/goals to guide early game
 - Pet friendships / likes & dislikes; decorating home interiors
@@ -50,3 +51,4 @@ Claude Code loads this file into every new session. **Keep it current:** at the 
 
 ## Session log
 - **2026-11-10/11:** Built v0.1 (PR #1, merged), set up GitHub Pages and fixed offline caching. Live deploy verified (HTTP 200). Added this file.
+- **2026-11-11:** iPhone home-screen app: status bar blurred the HUD and left a blue gap at the bottom. Switched the status bar style to `default`, made the page background grass green, bumped the SW cache to v3.

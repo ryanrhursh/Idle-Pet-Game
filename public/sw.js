@@ -1,7 +1,7 @@
 // Offline support: serve from cache, refresh the cache in the background.
 // On install we read index.html and pre-cache every file it references, so the
 // game works offline right after the first visit.
-const CACHE = 'pawville-v2';
+const CACHE = 'pawville-v3';
 const CORE = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png', './icons/icon.svg'];
 
 self.addEventListener('install', (e) => {

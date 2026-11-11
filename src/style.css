@@ -22,7 +22,7 @@ html, body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: #9ad7ff;
+  background: #7cc66b;
   color: var(--ink);
   font: 15px/1.4 ui-rounded, 'SF Pro Rounded', 'Nunito', system-ui, -apple-system, 'Segoe UI', sans-serif;
   overscroll-behavior: none;

@@ -12,8 +12,8 @@
   --shadow: 0 6px 24px rgba(60, 40, 80, 0.18);
   --safe-top: env(safe-area-inset-top, 0px);
   /* iOS home-screen apps blur a strip below the status bar; when there is a
-     top safe area (notch phones), drop the HUD an extra 48px to clear it. */
-  --hud-top: calc(8px + var(--safe-top) + min(var(--safe-top), 1px) * 48);
+     top safe area (notch phones), drop the HUD an extra 24px to clear it. */
+  --hud-top: calc(8px + var(--safe-top) + min(var(--safe-top), 1px) * 24);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --tabs-h: 64px;
   color-scheme: light;
@@ -33,7 +33,9 @@ html, body {
   user-select: none;
 }
 
-#viewport { position: fixed; inset: 0; }
+/* iOS home-screen apps report a screen that's short by the status bar height,
+   leaving a strip at the bottom; extend the 3D view by that much to cover it. */
+#viewport { position: fixed; top: 0; left: 0; right: 0; height: calc(100% + var(--safe-top)); }
 #viewport canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 
 /* ---------- HUD ---------- */

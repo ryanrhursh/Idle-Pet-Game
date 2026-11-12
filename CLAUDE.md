@@ -39,7 +39,7 @@ Claude Code loads this file into every new session. **Keep it current:** at the 
 ## Status
 - v0.1 is live: core loop, 3D town, day/night, strays, eggs, Petdex, autosave + 8h offline progress, PWA.
 - Tested in headless Chromium (desktop + iPhone/Pixel emulation). The owner plays on an iPhone (iOS 26) as a home-screen web app.
-- iOS 26 home-screen app: the page still draws under the status bar (the `default` status-bar meta seems to be ignored), and iOS blurs about 48pt below it. `--hud-top` in `style.css` lowers the HUD by an extra 48px whenever there's a top safe area. Green page background hides the bottom gap. Headless Chromium can't reproduce iOS home-screen mode, so check these on the owner's phone.
+- iOS 26 home-screen app: the page still draws under the status bar (the `default` status-bar meta seems to be ignored), and iOS blurs about 48pt below it. `--hud-top` in `style.css` lowers the HUD by an extra 24px whenever there's a top safe area (the owner found 48 too low). iOS also reports the screen short by the status-bar height, so `#viewport` is `100% + safe-top` tall to cover the bottom strip. Headless Chromium can't reproduce iOS home-screen mode, so check these on the owner's phone.
 - Known design choices you may want to revisit: production keeps running at night while pets sleep; a new game has no coin income until a Market is built (the welcome tip says so).
 
 ## Next up (ideas; the owner picks)
@@ -51,4 +51,5 @@ Claude Code loads this file into every new session. **Keep it current:** at the 
 
 ## Session log
 - **2026-11-10/11:** Built v0.1 (PR #1, merged), set up GitHub Pages and fixed offline caching. Live deploy verified (HTTP 200). Added this file.
-- **2026-11-11:** iPhone home-screen app: status bar blurred the HUD and left a blue gap at the bottom. Switched the status bar style to `default`, made the page background grass green, bumped the SW cache to v3 (PR #3). Bottom gap fixed; top blur remained, so the HUD now sits below it on notch phones.
+- **2026-11-11:** iPhone home-screen app: status bar blurred the HUD and left a blue gap at the bottom. Switched the status bar style to `default`, made the page background grass green, bumped the SW cache to v3 (PR #3). Bottom gap fixed; top blur remained, so the HUD now sits below it on notch phones (PR #4).
+- **2026-11-12:** HUD extra offset 48→24px per the owner; extended the 3D view by the safe-top height to cover the bottom strip (which had shown plain green).

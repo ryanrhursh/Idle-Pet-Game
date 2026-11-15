@@ -2,9 +2,10 @@ import './style.css';
 import { BUILDINGS, CONFIG, SPECIES } from './game/data.js';
 import { loadGame, saveGame, resetGame } from './game/state.js';
 import {
-  assignHome, assignJob, autoAssignAll, build, buildingAt, demolish, expandLand, getBuilding,
-  getPet, hatch, simulate, tick, upgrade,
+  assignHome, assignJob, autoAssignAll, build, buildingAt, demolish, expandLand, feedAll, feedPet,
+  getBuilding, getPet, hatch, simulate, tick, upgrade,
 } from './game/sim.js';
+import { claimAll, claimQuest, newlyFinished, rewardText } from './game/quests.js';
 import { Stage } from './render/stage.js';
 import { World } from './render/world.js';
 import { buildBuilding, buildPet, portrait } from './render/models.js';
@@ -75,6 +76,20 @@ const actions = {
     if (r.ok) world.focusTile(3.5, state.rows - 1);
   },
   upgrade: ({ id }) => result(upgrade(state, +id)),
+  claim: ({ id }) => result(claimQuest(state, id)),
+  claimAll: () => {
+    const done = claimAll(state);
+    if (!done.length) return;
+    state.events = [];
+    ui.toast(`🎁 Claimed ${done.length} goal${done.length === 1 ? '' : 's'}!`, 'great');
+    changed();
+  },
+  feed: ({ id }) => result(feedPet(state, +id)),
+  feedAll: () => {
+    const r = feedAll(state);
+    if (r.ok) ui.toast(`🍎 Fed ${r.fed} pet${r.fed === 1 ? '' : 's'}: everyone gained a level!`, 'good');
+    result(r);
+  },
   demolish: ({ id }) => {
     const b = getBuilding(state, +id);
     ui.confirm(`<h2>Demolish ${BUILDINGS[b.type].name}?</h2><p>Residents and workers will be moved out. You get half the base cost back.</p>`, 'confirmDemolish', { id });
@@ -196,7 +211,7 @@ addEventListener('keydown', (e) => {
 
 let last = performance.now();
 let lastWall = Date.now();
-let hudTimer = 0, sheetTimer = 0, saveTimer = 0;
+let hudTimer = 0, sheetTimer = 0, saveTimer = 0, questTimer = 0;
 
 function frame(now) {
   requestAnimationFrame(frame);
@@ -222,7 +237,14 @@ function frame(now) {
     ui.refresh();
   }
 
-  hudTimer += dt; sheetTimer += dt; saveTimer += dt;
+  hudTimer += dt; sheetTimer += dt; saveTimer += dt; questTimer += dt;
+  if (questTimer > 1) {
+    questTimer = 0;
+    const fresh = newlyFinished(state);
+    if (fresh.length === 1) ui.toast(`🎯 Goal reached: ${fresh[0].title}! Tap it to claim ${rewardText(fresh[0].reward)}`, 'great');
+    else if (fresh.length > 1) ui.toast(`🎯 ${fresh.length} goals reached! Open Goals to claim your rewards.`, 'great');
+    if (fresh.length) ui.refresh();
+  }
   if (hudTimer > 0.25) { hudTimer = 0; ui.renderHud(); }
   if (sheetTimer > 1) { sheetTimer = 0; ui.refresh(); }
   if (saveTimer > 10) { saveTimer = 0; saveGame(state); }
@@ -241,7 +263,7 @@ else if (!state.stats.coinsEarned) {
   ui.showModal(`<h2>Welcome to Pawville!</h2>
     <p>Your pets are the citizens of this little town. Give them homes, jobs and food, and more will come.</p>
     <p>${SPECIES.bunny.emoji} and ${SPECIES.beaver.emoji} are already settling in.</p>
-    <p class="hint">Tip: build a 🏪 Market Stall to start earning coins. Tap an empty tile to build, tap a pet to meet them.</p>
+    <p class="hint">Tip: follow the 🎯 goal at the bottom of the screen. Each one pays a reward and shows you what to build next. Tap an empty tile to build, tap a pet to meet them.</p>
     <button class="btn primary wide" data-act="closeModal">Let's go!</button>`);
 }
 requestAnimationFrame(frame);

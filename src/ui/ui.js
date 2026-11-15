@@ -4,10 +4,13 @@
 
 import { BUILDINGS, CONFIG, EGGS, RARITIES, RESOURCES, SPECIES, TRAITS, xpForLevel } from '../game/data.js';
 import {
-  buildCost, buildingAt, canAfford, collectionMul, expandCost, getBuilding, getPet, happinessFactors,
-  homeCapacity, jobSlots, netRates, residentsOf, totalHousing, upgradeCost, workersOf, workerMul,
-  buildingRateMul,
+  buildCost, buildingAt, canAfford, collectionMul, eggCost, expandCost, feedCost, getBuilding, getPet,
+  happinessFactors, homeCapacity, jobSlots, netRates, residentsOf, totalHousing, townCostMul, upgradeCost,
+  workersOf, workerMul, buildingRateMul,
 } from '../game/sim.js';
+import {
+  activeQuests, advice, claimableQuests, describeQuest, questProgress, questTotals, rewardText,
+} from '../game/quests.js';
 import { daylight } from '../render/stage.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -57,6 +60,7 @@ export class UI {
     this.toasts = $('#toasts');
     this.banner = $('#banner');
     this.modal = $('#modal');
+    this.goal = $('#goal');
 
     $('#sheet-close').addEventListener('click', () => this.close());
     $('#tabs').addEventListener('click', (e) => {
@@ -73,7 +77,7 @@ export class UI {
       const fn = this.actions[el.dataset.act];
       if (fn) fn({ ...el.dataset, value: el.value }, el);
     };
-    for (const root of [this.sheetBody, this.modal, this.banner, this.hud]) {
+    for (const root of [this.sheetBody, this.modal, this.banner, this.hud, this.goal]) {
       root.addEventListener('click', dispatch);
       root.addEventListener('change', dispatch);
     }
@@ -90,6 +94,7 @@ export class UI {
     document.querySelectorAll('#tabs [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === view || (view === 'pet' && b.dataset.tab === 'pets') || (view === 'building' && b.dataset.tab === 'build')));
     this.sheetBody.scrollTop = 0;
     this.render();
+    this.renderGoalChip();
   }
 
   close() {
@@ -97,6 +102,7 @@ export class UI {
     this.sheet.hidden = true;
     document.querySelectorAll('#tabs [data-tab]').forEach((b) => b.classList.remove('active'));
     this.actions.sheetClosed?.();
+    this.renderGoalChip();
   }
 
   // Re-render the open sheet, unless the player is mid-way through using a control.
@@ -111,6 +117,7 @@ export class UI {
     const s = this.getState();
     const views = {
       build: () => this.viewBuild(s),
+      goals: () => this.viewGoals(s),
       building: () => this.viewBuilding(s),
       pets: () => this.viewPets(s),
       pet: () => this.viewPet(s),
@@ -128,6 +135,29 @@ export class UI {
 
   costHtml(s, cost) {
     return Object.entries(cost).map(([r, n]) => `<span class="cost ${s.resources[r] >= n ? '' : 'short'}">${RESOURCES[r].emoji}${fmt(n)}</span>`).join('');
+  }
+
+  viewGoals(s) {
+    const { claimed, total } = questTotals(s);
+    const active = activeQuests(s);
+    const ready = claimableQuests(s);
+    let body = `<p class="hint">${claimed}/${total} goals complete. Finish a goal, claim the reward, and the next one unlocks.</p>`;
+    if (ready.length > 1) body += `<div class="row"><button class="btn primary" data-act="claimAll">🎁 Claim all (${ready.length})</button></div>`;
+    if (!active.length) body += `<div class="goal-card done"><b>🏆 All goals complete!</b><small>You have built a legendary Pawville.</small></div>`;
+    for (const q of active) {
+      const p = questProgress(s, q);
+      body += `<div class="goal-card ${p.done ? 'done' : ''}">
+        <div class="goal-head"><b>${esc(q.title)}</b><span class="reward">${rewardText(q.reward)}</span></div>
+        <small>${describeQuest(q)}${q.hint && !p.done ? `<br><i>${esc(q.hint)}</i>` : ''}</small>
+        <div class="goal-prog"><span class="bar wide"><i style="width:${(p.cur / p.goal) * 100}%"></i></span><em>${fmt(p.cur)}/${fmt(p.goal)}</em></div>
+        ${p.done ? `<button class="btn primary wide" data-act="claim" data-id="${q.id}">🎁 Claim reward</button>` : ''}
+      </div>`;
+    }
+    const tips = advice(s).slice(0, 4);
+    if (tips.length) {
+      body += `<h3>💡 Town tips</h3>` + tips.map((t) => `<div class="tip"><span>${t.icon}</span><p>${t.text}</p>${t.tab ? `<button class="btn small" data-act="tab" data-tab="${t.tab}">Open</button>` : ''}</div>`).join('');
+    }
+    return { title: '🎯 Goals', body };
   }
 
   viewBuild(s) {
@@ -215,7 +245,7 @@ export class UI {
     }
     body += `<div class="row">`;
     if (b.level < CONFIG.maxBuildingLevel) {
-      const cost = upgradeCost(b);
+      const cost = upgradeCost(s, b);
       body += `<button class="btn primary" data-act="upgrade" data-id="${b.id}" ${canAfford(s, cost) ? '' : 'disabled'}>⬆️ Upgrade ${this.costHtml(s, cost)}</button>`;
     } else body += `<span class="hint">Max level!</span>`;
     body += `<button class="btn danger" data-act="demolish" data-id="${b.id}">🧨 Demolish</button></div>`;
@@ -225,6 +255,7 @@ export class UI {
   viewPets(s) {
     const homeless = s.pets.filter((p) => p.homeId == null).length;
     const jobless = s.pets.filter((p) => p.jobId == null).length;
+    const canFeed = s.pets.some((p) => { const c = feedCost(p); return c != null && s.resources.food >= c; });
     const f = this.petFilter;
     let pets = [...s.pets];
     if (f === 'homeless') pets = pets.filter((p) => p.homeId == null);
@@ -236,7 +267,8 @@ export class UI {
       <button class="chip ${f === 'jobless' ? 'on' : ''}" data-act="petFilter" data-f="jobless">💤 Jobless ${jobless}</button>
     </div>
     <p class="hint">🛏️ ${s.pets.filter((p) => p.homeId != null).length}/${totalHousing(s)} beds used. Free beds attract strays.</p>
-    <div class="row"><button class="btn primary" data-act="autoAssign">✨ Auto-assign homes & jobs</button></div>`;
+    <div class="row"><button class="btn primary" data-act="autoAssign">✨ Auto-assign homes & jobs</button>
+      <button class="btn" data-act="feedAll" ${canFeed ? '' : 'disabled'} title="Spend food to give pets a level each">🍎 Feed all (${fmt(s.resources.food)} food)</button></div>`;
     body += pets.map((p) => {
       const home = p.homeId != null ? '🏠' : '🏚️';
       const job = p.jobId != null ? BUILDINGS[getBuilding(s, p.jobId).type].emoji : '💤';
@@ -264,6 +296,8 @@ export class UI {
       const full = workersOf(s, b.id).length >= jobSlots(b) && p.jobId !== b.id;
       return `<option value="${b.id}" ${p.jobId === b.id ? 'selected' : ''} ${full ? 'disabled' : ''}>${b.type === sp.favJob ? '⭐ ' : ''}${BUILDINGS[b.type].emoji} ${BUILDINGS[b.type].name} (${workersOf(s, b.id).length}/${jobSlots(b)})</option>`;
     }).join('');
+    const fc = feedCost(p);
+    const feed = fc == null ? '' : `<button class="btn primary small" data-act="feed" data-id="${p.id}" ${s.resources.food >= fc ? '' : 'disabled'}>🍎 Feed: level up ${this.costHtml(s, { food: fc })}</button>`;
     const body = `
       <div class="hero"><img class="big" src="${this.petImg(p.species)}" alt="">
         <div>
@@ -271,6 +305,7 @@ export class UI {
           <p>Level ${p.level}${p.level < CONFIG.maxPetLevel ? ` <span class="bar"><i style="width:${Math.min(100, (p.xp / need) * 100)}%"></i></span>` : ' (max)'}</p>
           <p>Trait: <b>${trait.name}</b> <small>${trait.desc}</small></p>
           <p>Dream job: ${fav.emoji} ${fav.name}</p>
+          ${feed}
         </div>
       </div>
       <h3>${mood(p.happiness)} Happiness ${Math.round(p.happiness)}%</h3>
@@ -288,12 +323,13 @@ export class UI {
   }
 
   viewHatch(s) {
-    let body = `<p class="hint">Make 🍬 treats at a Treat Factory, then hatch eggs to find new citizens. Every new species discovered boosts all production by ${Math.round(CONFIG.collectionBonus * 100)}%.</p><div class="cards">`;
+    let body = `<p class="hint">Treat Factories turn spare food into 🍬 treats. Hatch eggs with treats and coins to find new citizens (prices rise with every pet you add). Every new species discovered boosts all production by ${Math.round(CONFIG.collectionBonus * 100)}%.</p><div class="cards">`;
     for (const [id, egg] of Object.entries(EGGS)) {
       const total = Object.values(egg.weights).reduce((a, b) => a + b, 0);
       const odds = RARITY_ORDER.slice().reverse().filter((r) => egg.weights[r]).map((r) => `<span style="color:${RARITIES[r].color}">${RARITIES[r].name} ${Math.round((egg.weights[r] / total) * 100)}%</span>`).join(' · ');
+      const cost = eggCost(s, id);
       body += `<div class="card egg-card"><div class="egg">${egg.emoji}</div><div><b>${egg.name}</b><small>${odds}</small>
-        <button class="btn primary" data-act="hatch" data-egg="${id}" ${canAfford(s, egg.cost) ? '' : 'disabled'}>Hatch ${this.costHtml(s, egg.cost)}</button></div></div>`;
+        <button class="btn primary" data-act="hatch" data-egg="${id}" ${canAfford(s, cost) ? '' : 'disabled'}>Hatch ${this.costHtml(s, cost)}</button></div></div>`;
     }
     body += `</div>`;
     const free = totalHousing(s) - s.pets.filter((p) => p.homeId != null).length;
@@ -326,7 +362,9 @@ export class UI {
         <li>Your pets are the citizens. Each one needs a <b>home</b> 🏠, a <b>job</b> 🌾 and <b>food</b> 🍎.</li>
         <li>By day pets walk to work; at night they go home to sleep. Homeless pets sleep outside and get grumpy.</li>
         <li>Each species has a ⭐ dream job where it works 50% faster.</li>
-        <li>Free beds attract stray pets. Treats 🍬 hatch eggs for rarer pets.</li>
+        <li>Follow the <b>🎯 Goals</b> tab: each goal pays a reward and points you at what to build next.</li>
+        <li>Free beds attract stray pets. Treats 🍬 and coins hatch eggs for rarer pets.</li>
+        <li>Everything costs more as your pet count grows. Spare food 🍎 can be fed to pets to level them up.</li>
         <li>Happy pets work harder: add gardens and fountains.</li>
         <li>The town keeps working while you're away (up to ${CONFIG.maxOfflineSeconds / 3600}h).</li>
         <li>Controls: drag to move the camera, pinch or scroll to zoom, two-finger twist or right-drag to rotate. Tap things to inspect them.</li>
@@ -338,6 +376,8 @@ export class UI {
         <li><span>Eggs hatched</span><b>${s.stats.hatched}</b></li>
         <li><span>Strays adopted</span><b>${s.stats.strays}</b></li>
         <li><span>Coins earned</span><b>${fmt(s.stats.coinsEarned)}</b></li>
+        <li><span>Goals complete</span><b>${questTotals(s).claimed}/${questTotals(s).total}</b></li>
+        <li><span>Cost multiplier</span><b>×${townCostMul(s).toFixed(1)}</b></li>
       </ul>
       <label class="check"><input type="checkbox" data-act="toggleAuto" ${s.settings.autoAssign ? 'checked' : ''}> Auto-assign new pets to homes & jobs</label>
       <div class="row">
@@ -367,6 +407,22 @@ export class UI {
     }
     html += `<div class="res clock" title="${working ? 'Work time' : 'Rest time'}"><span>${isDay ? '☀️' : '🌙'}</span><b>Day ${day}</b><small>${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}</small></div>`;
     this.hud.innerHTML = html;
+    const ready = claimableQuests(s).length;
+    $('#tabs [data-tab="goals"]').classList.toggle('badge', ready > 0);
+    this.renderGoalChip();
+  }
+
+  // The current goal, floating above the tab bar while no sheet is open.
+  renderGoalChip() {
+    const s = this.getState();
+    const q = activeQuests(s, 1)[0];
+    if (!q || this.view || !this.banner.hidden) { this.goal.hidden = true; return; }
+    const p = questProgress(s, q);
+    this.goal.classList.toggle('done', p.done);
+    this.goal.innerHTML = p.done
+      ? `<span>🎁</span><div><b>${esc(q.title)}</b><small>Goal complete! Tap to claim ${rewardText(q.reward)}</small></div>`
+      : `<span>🎯</span><div><b>${esc(q.title)}</b><small>${describeQuest(q)} · ${fmt(p.cur)}/${fmt(p.goal)}</small></div>`;
+    this.goal.hidden = false;
   }
 
   // ---------- toasts / banner / modal ----------
@@ -384,10 +440,12 @@ export class UI {
   showBanner(html) {
     this.banner.innerHTML = html;
     this.banner.hidden = false;
+    this.renderGoalChip();
   }
 
   hideBanner() {
     this.banner.hidden = true;
+    this.renderGoalChip();
   }
 
   showModal(html) {

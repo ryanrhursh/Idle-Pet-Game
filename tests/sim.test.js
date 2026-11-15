@@ -3,9 +3,13 @@ import assert from 'node:assert/strict';
 import { createNewGame, saveGame, loadGame } from '../src/game/state.js';
 import {
   build, upgrade, demolish, hatch, tick, simulate, assignHome, assignJob, freeHomeSlots,
-  targetHappiness, netRates, workersOf, residentsOf, getBuilding, expandLand,
+  targetHappiness, netRates, workersOf, residentsOf, getBuilding, expandLand, buildCost, upgradeCost,
+  eggCost, feedPet, feedAll, feedCost, createPet,
 } from '../src/game/sim.js';
-import { CONFIG } from '../src/game/data.js';
+import {
+  activeQuests, advice, claimAll, claimQuest, claimableQuests, newlyFinished, questProgress, questTotals,
+} from '../src/game/quests.js';
+import { BUILDINGS, CONFIG, QUESTS, RESOURCES } from '../src/game/data.js';
 
 // small deterministic RNG
 function seeded(seed = 1) {
@@ -144,4 +148,129 @@ test('save + load round-trips and applies offline progress', () => {
 test('net rates are finite numbers', () => {
   const s = createNewGame(seeded());
   for (const v of Object.values(netRates(s))) assert.ok(Number.isFinite(v));
+});
+
+// ---------- goals, feeding and the balance pass ----------
+
+test('goals: progress, claim once, reward paid', () => {
+  const s = createNewGame(seeded());
+  assert.equal(activeQuests(s).length, 3);
+  assert.equal(activeQuests(s)[0].id, 'market');
+  assert.equal(claimQuest(s, 'market').ok, false, 'not finished yet');
+  s.resources.wood = 100;
+  build(s, 'market', 0, 0);
+  const q = QUESTS.find((x) => x.id === 'market');
+  assert.ok(questProgress(s, q).done);
+  const coins = s.resources.coins;
+  assert.ok(claimQuest(s, 'market').ok);
+  assert.equal(s.resources.coins, coins + q.reward.coins);
+  assert.equal(claimQuest(s, 'market').ok, false, 'cannot claim twice');
+  assert.notEqual(activeQuests(s)[0].id, 'market', 'next goal unlocks');
+});
+
+test('goals: newlyFinished notifies once; claimAll sweeps a veteran save', () => {
+  const s = createNewGame(seeded());
+  s.resources = { coins: 1e6, food: 0, wood: 1e6, treats: 0 };
+  build(s, 'market', 0, 0);
+  assert.equal(newlyFinished(s).length, 1);
+  assert.equal(newlyFinished(s).length, 0);
+  // a big town finishes many goals at once
+  s.settings.autoAssign = false;
+  let x = 1;
+  for (const t of ['hut', 'bakery', 'candy', 'garden']) build(s, t, x++, 1);
+  for (let i = 0; i < 6; i++) createPet(s, 'mouse', seeded(i + 1));
+  const before = questTotals(s).claimed;
+  const done = claimAll(s);
+  assert.ok(done.length >= 4, `claimed ${done.length}`);
+  assert.equal(questTotals(s).claimed, before + done.length);
+  assert.equal(claimableQuests(s).length, 0);
+});
+
+test('goals: every quest definition is valid', () => {
+  const ids = new Set();
+  const types = ['building', 'kind', 'buildings', 'pets', 'employed', 'species', 'rarity', 'hatched', 'level', 'petLevel', 'rows', 'happy', 'coins'];
+  for (const q of QUESTS) {
+    assert.ok(!ids.has(q.id), `duplicate id ${q.id}`);
+    ids.add(q.id);
+    assert.ok(types.includes(q.check.type), `${q.id}: unknown check type`);
+    assert.ok(q.check.n > 0);
+    if (q.check.building) assert.ok(BUILDINGS[q.check.building], `${q.id}: unknown building`);
+    assert.ok(Object.keys(q.reward).length && Object.keys(q.reward).every((r) => RESOURCES[r]), `${q.id}: bad reward`);
+    if (q.check.type === 'rows') assert.ok(q.check.n <= CONFIG.maxRows);
+    if (q.check.type === 'level') assert.ok(q.check.level <= CONFIG.maxBuildingLevel);
+    if (q.check.type === 'petLevel') assert.ok(q.check.n <= CONFIG.maxPetLevel);
+  }
+});
+
+test('old saves without goals still load, with an empty goal list', () => {
+  const store = memoryStorage();
+  const s = createNewGame(seeded());
+  delete s.quests;
+  saveGame(s, store);
+  const { state } = loadGame(store, s.savedAt + 1000);
+  assert.deepEqual(state.quests.claimed, {});
+  assert.equal(activeQuests(state)[0].id, 'market');
+});
+
+test('advisor spots the situations that strand players', () => {
+  const s = createNewGame(seeded());
+  assert.ok(advice(s).some((t) => /No free beds/.test(t.text)), 'full starter town has no beds');
+  assert.ok(advice(s).some((t) => /Treat Factory/.test(t.text)));
+  s.starving = true;
+  assert.ok(advice(s)[0].text.includes('hungry'));
+  // pets with no coin income at all get told to staff a coin building
+  const t = createNewGame(seeded());
+  for (const p of t.pets) assignJob(t, p.id, null);
+  assert.ok(advice(t).some((x) => /coin income/.test(x.text)));
+});
+
+test('the economy cannot stall completely: baseline income always flows', () => {
+  const s = createNewGame(seeded());
+  for (const p of s.pets) assignJob(s, p.id, null);
+  s.resources = { coins: 0, food: 100, wood: 0, treats: 0 };
+  simulate(s, 600, seeded(2));
+  assert.ok(s.resources.coins > 100, 'trickle of coins');
+  assert.ok(s.resources.wood > 50, 'trickle of wood');
+});
+
+test('everything costs more as the town grows', () => {
+  const s = createNewGame(seeded());
+  const hut = buildCost(s, 'hut').wood;
+  const egg = eggCost(s, 'basic');
+  const b = s.buildings[0];
+  const up = upgradeCost(s, b);
+  assert.ok(egg.coins > 0 && egg.treats > 0, 'eggs cost treats and coins');
+  assert.ok(up.wood > 0 && up.coins > 0, 'upgrades always cost both wood and coins');
+  for (let i = 0; i < 10; i++) createPet(s, 'mouse', seeded(i + 1));
+  assert.ok(buildCost(s, 'hut').wood > hut);
+  assert.ok(eggCost(s, 'basic').treats > egg.treats);
+  assert.ok(upgradeCost(s, b).coins > up.coins);
+});
+
+test('feeding turns food into levels and stops at max level', () => {
+  const s = createNewGame(seeded());
+  const p = s.pets[0];
+  s.resources.food = 0;
+  assert.equal(feedPet(s, p.id).ok, false, 'no food');
+  const cost = feedCost(p);
+  s.resources.food = cost + 5;
+  assert.ok(feedPet(s, p.id).ok);
+  assert.equal(p.level, 2);
+  assert.equal(s.resources.food, 5);
+  s.resources.food = 1e9;
+  const r = feedAll(s);
+  assert.ok(r.ok && r.fed === 2);
+  p.level = CONFIG.maxPetLevel;
+  assert.equal(feedCost(p), null);
+  assert.equal(feedPet(s, p.id).ok, false);
+});
+
+test('town can grow to the new maximum size and buildings reach the new max level', () => {
+  const s = createNewGame(seeded());
+  s.resources = { coins: 1e12, food: 0, wood: 1e12, treats: 0 };
+  while (s.rows < CONFIG.maxRows) assert.ok(expandLand(s).ok);
+  assert.equal(expandLand(s).ok, false);
+  const b = s.buildings[0];
+  while (b.level < CONFIG.maxBuildingLevel) assert.ok(upgrade(s, b.id).ok);
+  assert.equal(upgrade(s, b.id).ok, false);
 });

@@ -3,6 +3,7 @@
 
 import { CONFIG } from './data.js';
 import { createPet, autoAssignAll, simulate } from './sim.js';
+import { ensureQuestState } from './quests.js';
 
 const SAVE_KEY = 'pawville-save-v1';
 export const SAVE_VERSION = 1;
@@ -21,6 +22,7 @@ export function createNewGame(rng = Math.random) {
     starving: false,
     settings: { autoAssign: true },
     stats: { hatched: 0, strays: 0, coinsEarned: 0 },
+    quests: { claimed: {}, seen: {} },
     log: [],
     events: [],
     savedAt: Date.now(),
@@ -61,6 +63,7 @@ export function loadGame(storage = globalThis.localStorage, now = Date.now()) {
   if (state.version !== SAVE_VERSION) return { state: createNewGame(), offline: null };
   state.events = [];
   state.settings = { autoAssign: true, ...state.settings };
+  ensureQuestState(state); // saves from before goals existed get an empty goal list
   const away = Math.max(0, (now - (state.savedAt || now)) / 1000);
   let offline = null;
   if (away > 30) {

@@ -85,6 +85,42 @@ html, body {
 #tabs button span { font-size: 22px; line-height: 1.2; }
 #tabs button.active { background: var(--accent); color: var(--accent-ink); }
 
+#tabs button { position: relative; }
+#tabs button.badge::after {
+  content: ''; position: absolute; top: 2px; right: 8px; width: 11px; height: 11px;
+  background: #ff5d8f; border: 2px solid var(--panel); border-radius: 50%; animation: pulse 1s infinite;
+}
+
+/* ---------- goal chip + goal cards ---------- */
+#goal {
+  appearance: none; border: 0; cursor: pointer; font: inherit; color: var(--ink); text-align: left;
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(var(--tabs-h) + 24px + var(--safe-bottom));
+  display: flex; align-items: center; gap: 10px;
+  width: max-content; max-width: min(94vw, 440px);
+  background: var(--panel); padding: 8px 14px 8px 10px; border-radius: 16px; box-shadow: var(--shadow);
+  z-index: 5;
+}
+#goal[hidden] { display: none; }
+#goal > span { font-size: 24px; }
+#goal b { display: block; font-size: 14px; }
+#goal small { display: block; color: var(--muted); font-size: 12px; }
+#goal.done { background: #fff4d6; animation: pulse 1.4s infinite; }
+#goal.done small { color: var(--ink); font-weight: 600; }
+
+.goal-card { border: 1px solid var(--line); background: #fff; border-radius: 16px; padding: 10px 12px; margin: 8px 0; }
+.goal-card.done { border-color: #f5b301; background: #fff9e6; }
+.goal-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.goal-head .reward { font-size: 12px; font-weight: 700; white-space: nowrap; }
+.goal-card small { display: block; color: var(--muted); font-size: 13px; margin: 2px 0 6px; }
+.goal-prog { display: flex; align-items: center; gap: 8px; }
+.goal-prog .bar { flex: 1; }
+.goal-prog em { font-style: normal; font-size: 12px; font-weight: 700; min-width: 3.5em; text-align: right; }
+.goal-card .btn { margin-top: 8px; }
+.tip { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.tip > span { font-size: 20px; }
+.tip p { flex: 1; margin: 0; font-size: 13px; }
+
 /* ---------- sheet (bottom on phones, side panel on wide screens) ---------- */
 #sheet {
   position: fixed;

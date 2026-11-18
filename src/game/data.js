@@ -51,9 +51,10 @@ export const TRAITS = {
   social: { name: 'Social', desc: '+7% output per coworker (max +21%)', social: 0.07 },
 };
 
-// type: home | job | decor
-// cost: base cost of the first building of this kind. Each extra copy costs 15% more.
-// Upgrade cost = cost * UPGRADE_COST_MUL^level.
+// type: home | job | decor | wonder
+// cost: base cost of the first building of this kind. Each extra copy costs more (CONFIG.dupCostMul).
+// Upgrade cost: see upgradeCost() in sim.js. maxLevel overrides CONFIG.maxBuildingLevel.
+// wonder: only one of each (unique). Its level scales a town-wide bonus: perLevel x level.
 export const BUILDINGS = {
   hut: {
     name: 'Cozy Hut', emoji: '🛖', type: 'home',
@@ -105,9 +106,10 @@ export const BUILDINGS = {
   candy: {
     name: 'Treat Factory', emoji: '🏭', type: 'job',
     slots: 2, slotsPerLevel: 1,
-    produces: { treats: 0.04 },
+    produces: { treats: 0.015 },
+    consumes: { food: 0.15 },
     cost: { wood: 80, coins: 120 },
-    desc: 'Makes treats, used to hatch eggs.',
+    desc: 'Turns food into treats, used to hatch eggs.',
   },
   garden: {
     name: 'Flower Garden', emoji: '🌷', type: 'decor',
@@ -121,16 +123,41 @@ export const BUILDINGS = {
     cost: { wood: 70, coins: 90 },
     desc: 'A town landmark. Big happiness boost.',
   },
+  clocktower: {
+    name: 'Clock Tower', emoji: '🕰️', type: 'wonder', unique: true, maxLevel: 5,
+    effect: 'output', perLevel: 0.1,
+    cost: { coins: 50000, wood: 30000 },
+    desc: 'Everyone keeps better time. Boosts ALL production.',
+  },
+  academy: {
+    name: 'Pet Academy', emoji: '🎓', type: 'wonder', unique: true, maxLevel: 5,
+    effect: 'xp', perLevel: 0.5,
+    cost: { coins: 25000, wood: 15000 },
+    desc: 'Working pets learn faster and reach higher levels.',
+  },
+  grandhatchery: {
+    name: 'Grand Hatchery', emoji: '🐣', type: 'wonder', unique: true, maxLevel: 5,
+    effect: 'eggs', perLevel: 0.08,
+    cost: { coins: 35000, wood: 20000 },
+    desc: 'Makes every egg cheaper to hatch.',
+  },
 };
 
+// cost: what the very first egg costs. costScale: every egg you have hatched (of any kind) makes
+// the next one this much pricier, so a big town grows slowly instead of snowballing.
+// Nest Eggs cost coins + food: the late-game way to turn a stockpile into pets.
 export const EGGS = {
   basic: {
-    name: 'Pet Egg', emoji: '🥚', cost: { treats: 10 },
+    name: 'Pet Egg', emoji: '🥚', cost: { treats: 10 }, costScale: 1.06,
     weights: { common: 65, uncommon: 28, rare: 6, epic: 1, legendary: 0 },
   },
   golden: {
-    name: 'Golden Egg', emoji: '🌟', cost: { treats: 40 },
+    name: 'Golden Egg', emoji: '🌟', cost: { treats: 40 }, costScale: 1.06,
     weights: { common: 0, uncommon: 45, rare: 38, epic: 14, legendary: 3 },
+  },
+  nest: {
+    name: 'Nest Egg', emoji: '🪺', cost: { coins: 5000, food: 3000 }, costScale: 1.06,
+    weights: { common: 45, uncommon: 36, rare: 14, epic: 4, legendary: 1 },
   },
 };
 
@@ -147,16 +174,18 @@ export const PET_NAMES = [
 export const CONFIG = {
   gridCols: 8,
   startRows: 6,
-  maxRows: 10,
-  expandCost: (rows) => ({ coins: Math.round(150 * Math.pow(2, rows - 6)), wood: Math.round(100 * Math.pow(2, rows - 6)) }),
-  maxBuildingLevel: 5,
-  upgradeCostMul: 1.8,
-  dupCostMul: 1.15,
+  maxRows: 16,
+  expandCost: (rows) => ({ coins: Math.round(150 * Math.pow(1.9, rows - 6)), wood: Math.round(100 * Math.pow(1.9, rows - 6)) }),
+  maxBuildingLevel: 10,
+  upgradeCostBase: 1.8, // first upgrade costs this many times the base cost...
+  upgradeCostMul: 2.5, // ...and each later one costs this much more than the last
+  dupCostMul: 1.25,
   refundRatio: 0.5,
   levelOutputBonus: 0.08, // +8% per pet level above 1
   favJobBonus: 0.5, // +50% at favourite job
   collectionBonus: 0.03, // +3% all output per species discovered
-  maxPetLevel: 20,
+  maxPetLevel: 25,
+  maxPets: 100, // keeps the 3D town smooth on phones
   foodPerPet: 0.08, // per second
   happinessSpeed: 2, // points per second toward target
   dayLength: 90, // seconds per in-game day
@@ -164,6 +193,7 @@ export const CONFIG = {
   workEnd: 0.65, // fraction of the day when pets go home
   strayMin: 60,
   strayMax: 120,
+  strayCrowding: 12, // strays arrive (1 + pets / this) times slower, so big towns grow through eggs
   maxOfflineSeconds: 8 * 3600,
 };
 

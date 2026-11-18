@@ -74,8 +74,35 @@ export function buildCost(state, type) {
   return scaleCost(BUILDINGS[type].cost, Math.pow(CONFIG.dupCostMul, count));
 }
 
+export function maxLevelOf(b) {
+  return BUILDINGS[b.type].maxLevel ?? CONFIG.maxBuildingLevel;
+}
+
+// Cost to go from the building's current level to the next.
 export function upgradeCost(b) {
-  return scaleCost(BUILDINGS[b.type].cost, Math.pow(CONFIG.upgradeCostMul, b.level));
+  return scaleCost(BUILDINGS[b.type].cost, CONFIG.upgradeCostBase * Math.pow(CONFIG.upgradeCostMul, b.level - 1));
+}
+
+// ---------- wonders (one-of-a-kind buildings that boost the whole town) ----------
+
+export function wonderBonus(state, effect) {
+  let total = 0;
+  for (const b of state.buildings) {
+    const def = BUILDINGS[b.type];
+    if (def.type === 'wonder' && def.effect === effect) total += def.perLevel * b.level;
+  }
+  return total;
+}
+
+// Everything produced is multiplied by this: species collection bonus + Clock Tower.
+export function outputMul(state) {
+  return collectionMul(state) * (1 + wonderBonus(state, 'output'));
+}
+
+export function eggCost(state, eggId) {
+  const egg = EGGS[eggId];
+  const mul = Math.pow(egg.costScale || 1, state.stats.hatched) * (1 - wonderBonus(state, 'eggs'));
+  return scaleCost(egg.cost, mul);
 }
 
 export function expandCost(state) {
@@ -112,13 +139,19 @@ export function petLabel(pet) {
   return `${SPECIES[pet.species].emoji} ${pet.name}`;
 }
 
-export function hatch(state, eggId, rng = Math.random) {
+// free = a gift (quest reward): costs nothing and doesn't make later eggs pricier.
+export function hatch(state, eggId, rng = Math.random, free = false) {
   const egg = EGGS[eggId];
-  if (!canAfford(state, egg.cost)) return { ok: false, msg: 'Not enough treats.' };
-  pay(state, egg.cost);
+  if (!egg) return { ok: false, msg: 'Unknown egg.' };
+  if (state.pets.length >= CONFIG.maxPets) return { ok: false, msg: `The town is full (${CONFIG.maxPets} citizens).` };
+  if (!free) {
+    const cost = eggCost(state, eggId);
+    if (!canAfford(state, cost)) return { ok: false, msg: egg.cost.treats ? 'Not enough treats.' : 'Not enough coins or food.' };
+    pay(state, cost);
+  }
   const rarity = pickWeighted(egg.weights, rng);
   const { pet, isNew } = createPet(state, randomSpecies(rarity, rng), rng);
-  state.stats.hatched++;
+  if (!free) state.stats.hatched++;
   if (state.settings.autoAssign) autoAssignPet(state, pet);
   const sp = SPECIES[pet.species];
   emit(state, `${sp.emoji} ${pet.name} the ${RARITIES[rarity].name} ${sp.name} hatched!${isNew ? ' (New species!)' : ''}`, rarity === 'common' ? 'good' : 'great');
@@ -198,6 +231,7 @@ export function build(state, type, x, y) {
   if (!def) return { ok: false, msg: 'Unknown building.' };
   if (x < 0 || y < 0 || x >= CONFIG.gridCols || y >= state.rows) return { ok: false, msg: 'Out of bounds.' };
   if (buildingAt(state, x, y)) return { ok: false, msg: 'That tile is taken.' };
+  if (def.unique && state.buildings.some((b) => b.type === type)) return { ok: false, msg: `You already have a ${def.name}.` };
   const cost = buildCost(state, type);
   if (!canAfford(state, cost)) return { ok: false, msg: 'Not enough resources.' };
   pay(state, cost);
@@ -211,7 +245,7 @@ export function build(state, type, x, y) {
 export function upgrade(state, bId) {
   const b = getBuilding(state, bId);
   if (!b) return { ok: false, msg: 'No such building.' };
-  if (b.level >= CONFIG.maxBuildingLevel) return { ok: false, msg: 'Already max level.' };
+  if (b.level >= maxLevelOf(b)) return { ok: false, msg: 'Already max level.' };
   const cost = upgradeCost(b);
   if (!canAfford(state, cost)) return { ok: false, msg: 'Not enough resources.' };
   pay(state, cost);
@@ -312,7 +346,7 @@ export function production(state) {
   const prod = { coins: 0, food: 0, wood: 0, treats: 0 };
   const convProd = { coins: 0, food: 0, wood: 0, treats: 0 }; // output that needs inputs
   const convCons = { coins: 0, food: 0, wood: 0, treats: 0 };
-  const cmul = collectionMul(state);
+  const cmul = outputMul(state);
   for (const pet of state.pets) {
     if (pet.jobId == null) continue;
     const b = getBuilding(state, pet.jobId);
@@ -377,9 +411,10 @@ export function tick(state, dt, rng = Math.random) {
   }
 
   // workers gain experience
+  const xpMul = 1 + wonderBonus(state, 'xp');
   for (const pet of state.pets) {
     if (pet.jobId == null || pet.level >= CONFIG.maxPetLevel) continue;
-    pet.xp += dt * (TRAITS[pet.trait].xp || 1);
+    pet.xp += dt * (TRAITS[pet.trait].xp || 1) * xpMul;
     while (pet.level < CONFIG.maxPetLevel && pet.xp >= xpForLevel(pet.level)) {
       pet.xp -= xpForLevel(pet.level);
       pet.level++;
@@ -388,7 +423,7 @@ export function tick(state, dt, rng = Math.random) {
   }
 
   // strays wander in when there's a free bed
-  if (freeHomeSlots(state) > 0) {
+  if (freeHomeSlots(state) > 0 && state.pets.length < CONFIG.maxPets) {
     state.strayTimer -= dt;
     if (state.strayTimer <= 0) {
       const rarity = pickWeighted(STRAY_WEIGHTS, rng);
@@ -397,7 +432,7 @@ export function tick(state, dt, rng = Math.random) {
       if (state.settings.autoAssign) autoAssignPet(state, pet);
       const sp = SPECIES[pet.species];
       emit(state, `A stray ${sp.name}, ${sp.emoji} ${pet.name}, moved into town!${isNew ? ' (New species!)' : ''}`, 'good');
-      state.strayTimer = CONFIG.strayMin + rng() * (CONFIG.strayMax - CONFIG.strayMin);
+      state.strayTimer = (CONFIG.strayMin + rng() * (CONFIG.strayMax - CONFIG.strayMin)) * (1 + state.pets.length / CONFIG.strayCrowding);
     }
   }
 }

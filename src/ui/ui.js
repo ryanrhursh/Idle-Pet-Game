@@ -4,10 +4,11 @@
 
 import { BUILDINGS, CONFIG, EGGS, RARITIES, RESOURCES, SPECIES, TRAITS, xpForLevel } from '../game/data.js';
 import {
-  buildCost, buildingAt, canAfford, collectionMul, expandCost, getBuilding, getPet, happinessFactors,
-  homeCapacity, jobSlots, netRates, residentsOf, totalHousing, upgradeCost, workersOf, workerMul,
+  buildCost, buildingAt, canAfford, collectionMul, eggCost, expandCost, getBuilding, getPet, happinessFactors,
+  homeCapacity, jobSlots, maxLevelOf, netRates, outputMul, residentsOf, totalHousing, upgradeCost, workersOf, workerMul,
   buildingRateMul,
 } from '../game/sim.js';
+import { QUESTS, claimable, isClaimed, questProgress, questSummary, rewardText, upcoming } from '../game/quests.js';
 import { daylight } from '../render/stage.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -36,6 +37,14 @@ function fmtDuration(sec) {
   return h ? `${h}h ${m}m` : `${Math.max(1, m)}m`;
 }
 
+// What a wonder does at a given level, e.g. "+20% all production".
+function wonderText(def, level) {
+  const pct = Math.round(def.perLevel * level * 100);
+  if (def.effect === 'output') return `+${pct}% all production`;
+  if (def.effect === 'xp') return `+${pct}% pet XP`;
+  return `−${pct}% egg prices`;
+}
+
 function mood(h) {
   return h >= 80 ? '😄' : h >= 60 ? '🙂' : h >= 40 ? '😐' : h >= 20 ? '🙁' : '😢';
 }
@@ -51,6 +60,8 @@ export class UI {
     this.petFilter = 'all';
 
     this.hud = $('#hud');
+    this.goal = $('#goal');
+    this.goalHtml = '';
     this.sheet = $('#sheet');
     this.sheetTitle = $('#sheet-title');
     this.sheetBody = $('#sheet-body');
@@ -73,7 +84,7 @@ export class UI {
       const fn = this.actions[el.dataset.act];
       if (fn) fn({ ...el.dataset, value: el.value }, el);
     };
-    for (const root of [this.sheetBody, this.modal, this.banner, this.hud]) {
+    for (const root of [this.sheetBody, this.modal, this.banner, this.hud, this.goal]) {
       root.addEventListener('click', dispatch);
       root.addEventListener('change', dispatch);
     }
@@ -115,6 +126,7 @@ export class UI {
       pets: () => this.viewPets(s),
       pet: () => this.viewPet(s),
       hatch: () => this.viewHatch(s),
+      goals: () => this.viewGoals(s),
       dex: () => this.viewDex(s),
       menu: () => this.viewMenu(s),
     };
@@ -132,7 +144,7 @@ export class UI {
 
   viewBuild(s) {
     const tile = this.params.tile;
-    const groups = { home: 'Homes', job: 'Workplaces', decor: 'Decorations' };
+    const groups = { home: 'Homes', job: 'Workplaces', decor: 'Decorations', wonder: 'Wonders' };
     let body = tile
       ? `<p class="hint">Building on the highlighted tile.</p>`
       : `<p class="hint">Pick a building, then tap an empty tile in town.</p>`;
@@ -149,9 +161,11 @@ export class UI {
           if (def.consumes) stat += ' · uses ' + Object.entries(def.consumes).map(([r, v]) => `${RESOURCES[r].emoji}${v}/s`).join(' ');
         }
         if (def.type === 'decor') stat = `💖 +${def.happiness} happiness`;
-        body += `<button class="card build-card" data-act="pickBuilding" data-type="${id}" ${ok ? '' : 'disabled'}>
+        if (def.type === 'wonder') stat = `✨ ${wonderText(def, 1)} per level (max Lv ${def.maxLevel})`;
+        const built = def.unique && s.buildings.some((b) => b.type === id);
+        body += `<button class="card build-card" data-act="pickBuilding" data-type="${id}" ${ok && !built ? '' : 'disabled'}>
           <img src="${this.buildingImg(id)}" alt="">
-          <div><b>${def.name}</b><small>${def.desc}</small><small class="stat">${stat}</small><div class="costs">${this.costHtml(s, cost)}</div></div>
+          <div><b>${def.name}</b><small>${def.desc}</small><small class="stat">${stat}</small><div class="costs">${built ? '<span class="cost">✅ Built</span>' : this.costHtml(s, cost)}</div></div>
         </button>`;
       }
       body += `</div>`;
@@ -167,7 +181,7 @@ export class UI {
     const def = BUILDINGS[b.type];
     const out = {};
     for (const p of workersOf(s, b.id)) {
-      const mul = workerMul(s, p) * buildingRateMul(b) * collectionMul(s);
+      const mul = workerMul(s, p) * buildingRateMul(b) * outputMul(s);
       for (const [r, v] of Object.entries(def.produces)) out[r] = (out[r] || 0) + v * mul;
     }
     return out;
@@ -186,7 +200,7 @@ export class UI {
     const b = getBuilding(s, this.params.id);
     if (!b) return null;
     const def = BUILDINGS[b.type];
-    let body = `<div class="hero"><img src="${this.buildingImg(b.type)}" alt=""><div><p>${def.desc}</p><p class="stars">${'★'.repeat(b.level)}${'☆'.repeat(CONFIG.maxBuildingLevel - b.level)}</p></div></div>`;
+    let body = `<div class="hero"><img src="${this.buildingImg(b.type)}" alt=""><div><p>${def.desc}</p><p class="stars">${'★'.repeat(b.level)}${'☆'.repeat(maxLevelOf(b) - b.level)}</p></div></div>`;
     if (def.type === 'home') {
       const res = residentsOf(s, b.id);
       body += `<h3>Residents ${res.length}/${homeCapacity(b)}</h3>`;
@@ -209,12 +223,15 @@ export class UI {
       }
       const fans = Object.values(SPECIES).filter((sp) => sp.favJob === b.type).map((sp) => sp.emoji).join(' ');
       body += `<p class="hint">⭐ Dream job for: ${fans}. Those pets work 50% faster and are happier here.</p>`;
+    } else if (def.type === 'wonder') {
+      body += `<p class="output">✨ ${wonderText(def, b.level)}</p>`;
+      if (b.level < maxLevelOf(b)) body += `<p class="hint">Next level: ${wonderText(def, b.level + 1)}</p>`;
     } else {
       const h = def.happiness + def.happinessPerLevel * (b.level - 1);
       body += `<p class="output">💖 +${h} happiness for every pet in town (decor total caps at +40).</p>`;
     }
     body += `<div class="row">`;
-    if (b.level < CONFIG.maxBuildingLevel) {
+    if (b.level < maxLevelOf(b)) {
       const cost = upgradeCost(b);
       body += `<button class="btn primary" data-act="upgrade" data-id="${b.id}" ${canAfford(s, cost) ? '' : 'disabled'}>⬆️ Upgrade ${this.costHtml(s, cost)}</button>`;
     } else body += `<span class="hint">Max level!</span>`;
@@ -288,17 +305,45 @@ export class UI {
   }
 
   viewHatch(s) {
-    let body = `<p class="hint">Make 🍬 treats at a Treat Factory, then hatch eggs to find new citizens. Every new species discovered boosts all production by ${Math.round(CONFIG.collectionBonus * 100)}%.</p><div class="cards">`;
+    let body = `<p class="hint">Make 🍬 treats at a Treat Factory (it eats food), then hatch eggs to find new citizens. Every new species discovered boosts all production by ${Math.round(CONFIG.collectionBonus * 100)}%.</p>
+      <p class="hint">Each egg you hatch makes the next one ${Math.round((EGGS.basic.costScale - 1) * 100)}% pricier. Stockpiling coins and food? Nest Eggs turn them into pets.</p><div class="cards">`;
     for (const [id, egg] of Object.entries(EGGS)) {
+      const cost = eggCost(s, id);
       const total = Object.values(egg.weights).reduce((a, b) => a + b, 0);
       const odds = RARITY_ORDER.slice().reverse().filter((r) => egg.weights[r]).map((r) => `<span style="color:${RARITIES[r].color}">${RARITIES[r].name} ${Math.round((egg.weights[r] / total) * 100)}%</span>`).join(' · ');
       body += `<div class="card egg-card"><div class="egg">${egg.emoji}</div><div><b>${egg.name}</b><small>${odds}</small>
-        <button class="btn primary" data-act="hatch" data-egg="${id}" ${canAfford(s, egg.cost) ? '' : 'disabled'}>Hatch ${this.costHtml(s, egg.cost)}</button></div></div>`;
+        <button class="btn primary" data-act="hatch" data-egg="${id}" ${canAfford(s, cost) ? '' : 'disabled'}>Hatch ${this.costHtml(s, cost)}</button></div></div>`;
     }
     body += `</div>`;
     const free = totalHousing(s) - s.pets.filter((p) => p.homeId != null).length;
-    if (free <= 0) body += `<p class="warn">⚠️ No free beds. New pets will be homeless until you build more homes.</p>`;
+    if (s.pets.length >= CONFIG.maxPets) body += `<p class="warn">🏙️ The town is full (${CONFIG.maxPets} citizens).</p>`;
+    else if (free <= 0) body += `<p class="warn">⚠️ No free beds. New pets will be homeless until you build more homes.</p>`;
     return { title: '🥚 Hatchery', body };
+  }
+
+  viewGoals(s) {
+    const sum = questSummary(s);
+    const ready = claimable(s);
+    const next = upcoming(s, 4);
+    const row = (q, state) => {
+      const cur = questProgress(s, q);
+      const pct = Math.round((cur / q.goal) * 100);
+      return `<div class="quest ${state}">
+        <div class="q-icon">${q.icon}</div>
+        <div class="grow"><b>${q.title}</b><small>${q.desc}</small>
+          ${state === 'ready' ? '' : `<span class="bar wide"><i style="width:${pct}%"></i></span><small>${fmt(cur)} / ${fmt(q.goal)}</small>`}
+          <small class="reward">Reward: ${rewardText(q.reward)}</small></div>
+        ${state === 'ready' ? `<button class="btn primary small" data-act="claimQuest" data-id="${q.id}">Claim</button>` : ''}
+      </div>`;
+    };
+    let body = `<p class="hint">🎯 ${sum.done} of ${sum.total} goals done. Finish goals to earn coins, wood, treats and free eggs.</p>`;
+    if (ready.length > 1) body += `<div class="row"><button class="btn primary wide" data-act="claimAll">🎁 Claim all (${ready.length})</button></div>`;
+    if (ready.length) body += `<h3>Ready to claim</h3>` + ready.map((q) => row(q, 'ready')).join('');
+    if (next.length) body += `<h3>Up next</h3>` + next.map((q) => row(q, 'todo')).join('');
+    else if (!ready.length) body += `<p class="hint">🏆 You've finished every goal. Legend!</p>`;
+    const left = sum.total - sum.done - ready.length - next.length;
+    if (left > 0) body += `<p class="hint">…and ${left} more goals to discover.</p>`;
+    return { title: '🎯 Goals', body };
   }
 
   viewDex(s) {
@@ -327,6 +372,8 @@ export class UI {
         <li>By day pets walk to work; at night they go home to sleep. Homeless pets sleep outside and get grumpy.</li>
         <li>Each species has a ⭐ dream job where it works 50% faster.</li>
         <li>Free beds attract stray pets. Treats 🍬 hatch eggs for rarer pets.</li>
+        <li>Check the 🎯 Goals tab for what to do next. Finishing goals pays rewards.</li>
+        <li>Spend big on upgrades, more land and one-of-a-kind wonders. They boost the whole town.</li>
         <li>Happy pets work harder: add gardens and fountains.</li>
         <li>The town keeps working while you're away (up to ${CONFIG.maxOfflineSeconds / 3600}h).</li>
         <li>Controls: drag to move the camera, pinch or scroll to zoom, two-finger twist or right-drag to rotate. Tap things to inspect them.</li>
@@ -335,6 +382,7 @@ export class UI {
       <ul class="factors">
         <li><span>Day</span><b>${days}</b></li>
         <li><span>Citizens</span><b>${s.pets.length}</b></li>
+        <li><span>Goals done</span><b>${questSummary(s).done}/${QUESTS.length}</b></li>
         <li><span>Eggs hatched</span><b>${s.stats.hatched}</b></li>
         <li><span>Strays adopted</span><b>${s.stats.strays}</b></li>
         <li><span>Coins earned</span><b>${fmt(s.stats.coinsEarned)}</b></li>
@@ -367,6 +415,29 @@ export class UI {
     }
     html += `<div class="res clock" title="${working ? 'Work time' : 'Rest time'}"><span>${isDay ? '☀️' : '🌙'}</span><b>Day ${day}</b><small>${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}</small></div>`;
     this.hud.innerHTML = html;
+    this.renderGoal(s);
+  }
+
+  // The little "next goal" pill under the resource bar. Only touched when its text changes,
+  // so a tap on it is never lost to a re-render.
+  renderGoal(s) {
+    const ready = claimable(s);
+    const next = upcoming(s, 1)[0];
+    let html = '';
+    if (ready.length) html = `<button class="goal-pill ready">🎁 ${ready.length} reward${ready.length > 1 ? 's' : ''} ready!</button>`;
+    else if (next) html = `<button class="goal-pill">${next.icon} ${next.title} <small>${fmt(questProgress(s, next))}/${fmt(next.goal)}</small></button>`;
+    const dot = $('#tabs [data-tab=goals] .dot');
+    if (dot) dot.hidden = !ready.length;
+    if (html !== this.goalHtml) {
+      this.goalHtml = html;
+      this.goal.innerHTML = html;
+      this.goal.hidden = !html;
+    }
+    const h = this.hud.offsetHeight;
+    if (h !== this.hudHeight) {
+      this.hudHeight = h;
+      document.documentElement.style.setProperty('--hud-h', `${h}px`);
+    }
   }
 
   // ---------- toasts / banner / modal ----------

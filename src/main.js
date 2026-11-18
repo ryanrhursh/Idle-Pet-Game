@@ -8,6 +8,7 @@ import {
 import { Stage } from './render/stage.js';
 import { World } from './render/world.js';
 import { buildBuilding, buildPet, portrait } from './render/models.js';
+import { claimAll, claimQuest, claimable } from './game/quests.js';
 import { UI } from './ui/ui.js';
 
 let { state, offline } = loadGame();
@@ -120,17 +121,39 @@ const actions = {
     changed();
     ui.showHatch(r.pet, r.isNew);
   },
+  claimQuest: ({ id }) => {
+    const r = claimQuest(state, id);
+    if (!r.ok) return result(r);
+    showRewards(r.hatched);
+  },
+  claimAll: () => {
+    const r = claimAll(state);
+    if (r.quests.length) showRewards(r.hatched);
+  },
   toggleAuto: (_, el) => { state.settings.autoAssign = el.checked; },
   saveNow: () => { saveGame(state); ui.toast('Saved!', 'good'); },
   reset: () => ui.confirm('<h2>Start over?</h2><p>This erases your town and all your pets.</p>', 'confirmReset'),
   confirmReset: () => {
     state = resetGame();
+    announced.clear();
     ui.closeModal();
     ui.close();
     changed();
     saveGame(state);
   },
 };
+
+// After claiming goal rewards: if free eggs hatched, show the newest pet; otherwise the toast is enough.
+function showRewards(hatched) {
+  if (hatched.length) {
+    const goalToasts = state.events.filter((e) => e.msg.startsWith('🎁'));
+    state.events = goalToasts;
+    changed();
+    const last = hatched[hatched.length - 1];
+    ui.showHatch(last.pet, last.isNew);
+    if (hatched.length > 1) ui.toast(`${hatched.length} eggs hatched! See them in Pets.`, 'great');
+  } else changed();
+}
 
 const ui = new UI({ getState: () => state, actions, petImg, buildingImg });
 new ResizeObserver(layoutChanged).observe(document.getElementById('sheet'));
@@ -197,6 +220,7 @@ addEventListener('keydown', (e) => {
 let last = performance.now();
 let lastWall = Date.now();
 let hudTimer = 0, sheetTimer = 0, saveTimer = 0;
+const announced = new Set(claimable(state).map((q) => q.id)); // goals we've already told the player about
 
 function frame(now) {
   requestAnimationFrame(frame);
@@ -224,7 +248,15 @@ function frame(now) {
 
   hudTimer += dt; sheetTimer += dt; saveTimer += dt;
   if (hudTimer > 0.25) { hudTimer = 0; ui.renderHud(); }
-  if (sheetTimer > 1) { sheetTimer = 0; ui.refresh(); }
+  if (sheetTimer > 1) {
+    sheetTimer = 0;
+    for (const q of claimable(state)) {
+      if (announced.has(q.id)) continue;
+      announced.add(q.id);
+      ui.toast(`🎯 Goal complete: ${q.title}! Claim it in Goals.`, 'great');
+    }
+    ui.refresh();
+  }
   if (saveTimer > 10) { saveTimer = 0; saveGame(state); }
 
   stage.setDayPhase((state.time % CONFIG.dayLength) / CONFIG.dayLength);
@@ -241,7 +273,7 @@ else if (!state.stats.coinsEarned) {
   ui.showModal(`<h2>Welcome to Pawville!</h2>
     <p>Your pets are the citizens of this little town. Give them homes, jobs and food, and more will come.</p>
     <p>${SPECIES.bunny.emoji} and ${SPECIES.beaver.emoji} are already settling in.</p>
-    <p class="hint">Tip: build a 🏪 Market Stall to start earning coins. Tap an empty tile to build, tap a pet to meet them.</p>
+    <p class="hint">Tip: build a 🏪 Market Stall to start earning coins. Tap an empty tile to build, tap a pet to meet them. The 🎯 Goals tab tells you what to do next.</p>
     <button class="btn primary wide" data-act="closeModal">Let's go!</button>`);
 }
 requestAnimationFrame(frame);

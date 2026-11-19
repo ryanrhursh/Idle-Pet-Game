@@ -2,9 +2,14 @@
 // Progress is always computed from the game state, so there is no counter to keep in sync,
 // and old saves automatically get credit for what they already did.
 // Claimed goals are remembered in state.quests.claimed.
+//
+// After the hand-written list (LIST) the game never runs out of goals: ENDLESS below describes a few
+// kinds of goal ("Earn X coins", "Harvest X food", ...) whose targets and rewards come from a formula,
+// tier after tier, forever. Only the claimed tiers are saved, under ids like "coins:3".
 
 import { BUILDINGS, CONFIG, EGGS, RESOURCES, SPECIES } from './data.js';
 import { emit, hatch, maxLevelOf } from './sim.js';
+import { fmt, nice } from './util.js';
 
 const coinsEarned = (s) => s.stats.coinsEarned;
 const owns = (type) => (s) => s.buildings.filter((b) => b.type === type).length;
@@ -18,6 +23,7 @@ const wondersBuilt = (s) => s.buildings.filter((b) => BUILDINGS[b.type].type ===
 // only counts once the town has a few citizens (the two starters are happy from day 1)
 const averageMood = (s) => (s.pets.length >= 6 ? s.pets.reduce((a, p) => a + p.happiness, 0) / s.pets.length : 0);
 const maxedBuildings = (s) => s.buildings.filter((b) => b.level >= maxLevelOf(b)).length;
+const shinySpecies = (s) => Object.keys(s.shinyFound || {}).length;
 const legendaries = (s) => new Set(s.pets.filter((p) => SPECIES[p.species].rarity === 'legendary').map((p) => p.species)).size;
 
 // [id, icon, title, description, goal, progress(state), reward]
@@ -60,6 +66,7 @@ const LIST = [
   ['clock', '🕰️', 'Time well spent', 'Build the Clock Tower.', 1, owns('clocktower'), { coins: 20000, wood: 10000, golden: 2 }],
   ['rows12', '🏞️', 'Frontier', 'Expand the town to 12 rows.', 12, (s) => s.rows, { coins: 12000, wood: 8000 }],
   ['hatch30', '🪺', 'Nest builder', 'Hatch 30 eggs.', 30, (s) => s.stats.hatched, { coins: 10000, food: 5000, golden: 2 }],
+  ['shiny1', '✨', 'Something sparkly', 'Hatch a shiny pet. About 1 egg in 30 holds one (a bit better in Golden Eggs).', 1, shinySpecies, { golden: 2 }],
   // ---- chapter 5: legends ----
   ['pets50', '🏙️', 'Metropolis', 'Have 50 citizens.', 50, pets, { coins: 40000, wood: 25000, golden: 3 }],
   ['dex16', '🧭', 'Pet master', 'Discover 16 different species.', 16, found, { golden: 3 }],
@@ -68,8 +75,10 @@ const LIST = [
   ['wonders3', '🏛️', 'Wonders of Pawville', 'Build all 3 wonders.', 3, wondersBuilt, { coins: 100000, wood: 60000, golden: 3 }],
   ['earn5m', '💎', 'Fortune', 'Earn 5,000,000 coins in total.', 5000000, coinsEarned, { golden: 5 }],
   ['rows16', '🌍', 'Whole valley', 'Expand the town to 16 rows.', 16, (s) => s.rows, { coins: 100000, wood: 60000 }],
+  ['shiny2', '🌈', 'Glitter gang', 'Find 2 different shiny species.', 2, shinySpecies, { golden: 3 }],
   ['legend', '🐲', 'Legend has it…', 'Have both a Dragon and a Lion living in town.', 2, legendaries, { golden: 5 }],
   ['dex19', '🏆', 'Gotta find them all', 'Discover all 19 species.', 19, found, { coins: 250000, golden: 5 }],
+  ['shiny3', '💫', 'Shiny collector', 'Find 3 different shiny species.', 3, shinySpecies, { coins: 300000, golden: 5 }],
   // ---- chapter 6: the long game ----
   ['pets100', '🌇', 'Packed to the rafters', `Have ${CONFIG.maxPets} citizens (the town limit).`, CONFIG.maxPets, pets, { coins: 500000, wood: 300000, golden: 5 }],
   ['upgrade10', '👑', 'Pinnacle', 'Upgrade any building to level 10 (max).', 10, topBuildingLevel, { coins: 400000, wood: 250000, golden: 5 }],
@@ -81,8 +90,94 @@ const LIST = [
 export const QUESTS = LIST.map(([id, icon, title, desc, goal, progress, reward]) => ({ id, icon, title, desc, goal, progress, reward }));
 const BY_ID = Object.fromEntries(QUESTS.map((q) => [q.id, q]));
 
+// ---------- endless goals ----------
+// tier t = 1, 2, 3, ... Each kind has a goal formula, a reward formula and a hand-written goal that must be
+// claimed first (so the endless ones take over from the list chapter by chapter). Targets grow geometrically.
+// Only measures that can keep growing are used: the town is capped at 100 citizens, 19 species, 16 rows
+// and building level 10, so goals about those can't go on forever (Town Requests cover them instead).
+
+const grow = (base, mul, t) => nice(base * Math.pow(mul, t - 1));
+const eggs = (start, cap) => (t) => Math.min(cap, start + t);
+const dayNumber = (s) => Math.floor(s.time / CONFIG.dayLength) + 1;
+
+export const ENDLESS = [
+  {
+    kind: 'coins', icon: '🪙', after: 'earn100m', progress: coinsEarned,
+    names: ['Gold rush', 'Coin cascade', 'Treasure vault', 'Dragon hoard', 'Money mountain', 'Golden age'],
+    goal: (t) => grow(4e8, 4, t),
+    desc: (g) => `Earn ${fmt(g)} coins in total.`,
+    reward: (t, g) => ({ coins: nice(g * 0.015), wood: nice(g * 0.01), golden: eggs(4, 10)(t) }),
+  },
+  {
+    kind: 'wood', icon: '🪵', after: 'earn250k', progress: (s) => s.stats.woodEarned || 0,
+    names: ['Timber tycoon', 'Lumberjack legend', 'Forest baron', 'Sawdust storm', 'Great grove'],
+    goal: (t) => grow(2e5, 4, t),
+    desc: (g) => `Chop ${fmt(g)} wood in total.`,
+    reward: (t, g) => ({ coins: nice(g * 0.1), wood: nice(g * 0.05), golden: eggs(1, 8)(t) }),
+  },
+  {
+    kind: 'food', icon: '🍎', after: 'pets15', progress: (s) => s.stats.foodEarned || 0,
+    names: ['Harvest festival', 'Berry bonanza', 'Bountiful barns', 'Feast of Pawville', 'Never hungry'],
+    goal: (t) => grow(3e5, 4, t),
+    desc: (g) => `Harvest ${fmt(g)} food in total.`,
+    reward: (t, g) => ({ coins: nice(g * 0.1), food: nice(g * 0.05), golden: eggs(1, 8)(t) }),
+  },
+  {
+    kind: 'treats', icon: '🍬', after: 'hatch10', progress: (s) => s.stats.treatsEarned || 0,
+    names: ['Sweet streak', 'Candy cascade', 'Sugar rush', 'Confection kingdom', 'Treat tornado'],
+    goal: (t) => grow(500, 3, t),
+    desc: (g) => `Make ${fmt(g)} treats in total.`,
+    reward: (t, g) => ({ treats: nice(g * 0.2), golden: eggs(1, 8)(t) }),
+  },
+  {
+    kind: 'requests', icon: '📮', after: 'pets8', progress: (s) => (s.requests ? s.requests.done : 0),
+    names: ['Helping paw', 'Good neighbour', 'Pillar of the town', 'Town hero', 'Beloved mayor'],
+    goal: (t) => grow(10, 2.5, t),
+    desc: (g) => `Finish ${fmt(g)} Town Requests.`,
+    reward: (t, g) => ({ treats: nice(g * 10), coins: nice(g * 4000), golden: eggs(0, 8)(t) }),
+  },
+  {
+    kind: 'days', icon: '📅', after: 'pets25', progress: dayNumber,
+    names: ['Town elder', 'Old Pawville', 'Timeless town', 'Evergreen village'],
+    goal: (t) => grow(1000, 1.5, t),
+    desc: (g) => `Keep the town going until day ${fmt(g)}.`,
+    reward: (t, g) => ({ coins: nice(g * 2000), wood: nice(g * 1000), golden: eggs(1, 6)(t) }),
+  },
+];
+const KIND = Object.fromEntries(ENDLESS.map((k) => [k.kind, k]));
+
+// The goal for one tier of one kind (tier 1, 2, 3, ...). Built on demand: nothing is stored.
+export function endlessQuest(kind, tier) {
+  const k = KIND[kind];
+  const goal = k.goal(tier);
+  const cycle = Math.floor((tier - 1) / k.names.length);
+  return {
+    id: `${kind}:${tier}`, kind, tier, endless: true, icon: k.icon,
+    title: `${k.names[(tier - 1) % k.names.length]}${cycle ? ` ${cycle + 1}` : ''} #${tier}`,
+    desc: k.desc(goal), goal, progress: k.progress, reward: k.reward(tier, goal),
+  };
+}
+
+function questById(id) {
+  if (BY_ID[id]) return BY_ID[id];
+  const m = /^([a-z]+):(\d+)$/.exec(id);
+  return m && KIND[m[1]] && +m[2] >= 1 ? endlessQuest(m[1], +m[2]) : null;
+}
+
 export function isClaimed(state, id) {
   return !!(state.quests && state.quests.claimed[id]);
+}
+
+// The next unclaimed tier of each kind whose hand-written lead-in has been claimed.
+export function currentEndless(state) {
+  const out = [];
+  for (const k of ENDLESS) {
+    if (!isClaimed(state, k.after)) continue;
+    let t = 1;
+    while (isClaimed(state, `${k.kind}:${t}`)) t++;
+    out.push(endlessQuest(k.kind, t));
+  }
+  return out;
 }
 
 export function questProgress(state, q) {
@@ -94,33 +189,35 @@ export function isComplete(state, q) {
 }
 
 export function claimable(state) {
-  return QUESTS.filter((q) => !isClaimed(state, q.id) && isComplete(state, q));
+  return [...QUESTS, ...currentEndless(state)].filter((q) => !isClaimed(state, q.id) && isComplete(state, q));
 }
 
-// The next goals to work on: unclaimed, not yet complete, in list order.
+// The next goals to work on. Hand-written goals come first, in list order; endless goals follow, the
+// ones closest to done first. With room for several, the endless ones get at least two places.
 export function upcoming(state, n = 3) {
-  return QUESTS.filter((q) => !isClaimed(state, q.id) && !isComplete(state, q)).slice(0, n);
+  const hand = QUESTS.filter((q) => !isClaimed(state, q.id) && !isComplete(state, q));
+  const frac = (q) => q.progress(state) / q.goal;
+  const endless = currentEndless(state).filter((q) => !isComplete(state, q)).sort((a, b) => frac(b) - frac(a));
+  const handSlots = Math.max(n - Math.min(2, endless.length), 1);
+  return [...hand.slice(0, handSlots), ...endless, ...hand.slice(handSlots)].slice(0, n);
 }
 
 export function questSummary(state) {
-  const done = QUESTS.filter((q) => isClaimed(state, q.id)).length;
-  return { done, total: QUESTS.length, ready: claimable(state).length };
+  const claimed = Object.keys((state.quests && state.quests.claimed) || {});
+  const endless = claimed.filter((id) => id.includes(':')).length;
+  return { done: claimed.length - endless, total: QUESTS.length, endless, ready: claimable(state).length };
 }
+
+const amount = (n) => (n >= 1e4 ? fmt(n) : n.toLocaleString('en-US'));
 
 export function rewardText(reward) {
-  return Object.entries(reward).map(([k, n]) => (EGGS[k] ? `${EGGS[k].emoji}×${n} free` : `${RESOURCES[k].emoji}${n.toLocaleString('en-US')}`)).join(' ');
+  return Object.entries(reward).map(([k, n]) => (EGGS[k] ? `${EGGS[k].emoji}×${n} free` : `${RESOURCES[k].emoji}${amount(n)}`)).join(' ');
 }
 
-// Pays the reward. Returns the pets that hatched from free-egg rewards (so the UI can show them).
-export function claimQuest(state, id, rng = Math.random) {
-  const q = BY_ID[id];
-  if (!q) return { ok: false, msg: 'No such goal.' };
-  if (isClaimed(state, id)) return { ok: false, msg: 'Already claimed.' };
-  if (!isComplete(state, q)) return { ok: false, msg: 'Not finished yet.' };
-  state.quests = state.quests || { claimed: {} };
-  state.quests.claimed[id] = true;
+// Pays a reward (resources, or free eggs that hatch at once). Returns the hatches, so the UI can show them.
+export function payReward(state, reward, rng = Math.random) {
   const hatched = [];
-  for (const [key, amt] of Object.entries(q.reward)) {
+  for (const [key, amt] of Object.entries(reward)) {
     if (EGGS[key]) {
       for (let i = 0; i < amt; i++) {
         const r = hatch(state, key, rng, true);
@@ -129,15 +226,32 @@ export function claimQuest(state, id, rng = Math.random) {
       }
     } else state.resources[key] = (state.resources[key] || 0) + amt;
   }
+  return hatched;
+}
+
+export function claimQuest(state, id, rng = Math.random) {
+  const q = questById(id);
+  if (!q) return { ok: false, msg: 'No such goal.' };
+  if (isClaimed(state, id)) return { ok: false, msg: 'Already claimed.' };
+  if (q.endless && !currentEndless(state).some((c) => c.id === id)) return { ok: false, msg: 'Not unlocked yet.' };
+  if (!isComplete(state, q)) return { ok: false, msg: 'Not finished yet.' };
+  state.quests = state.quests || { claimed: {} };
+  state.quests.claimed[id] = true;
+  const hatched = payReward(state, q.reward, rng);
   emit(state, `🎁 Goal complete: ${q.title}! ${rewardText(q.reward)}`, 'great');
   return { ok: true, quest: q, hatched };
 }
 
+// Claims everything that is ready. A finished endless tier unlocks the next one, which may be done too, so keep going.
 export function claimAll(state, rng = Math.random) {
   const quests = [], hatched = [];
-  for (const q of claimable(state)) {
-    const r = claimQuest(state, q.id, rng);
-    if (r.ok) { quests.push(q); hatched.push(...r.hatched); }
+  for (let round = 0; round < 500; round++) {
+    const ready = claimable(state);
+    if (!ready.length) break;
+    for (const q of ready) {
+      const r = claimQuest(state, q.id, rng);
+      if (r.ok) { quests.push(q); hatched.push(...r.hatched); }
+    }
   }
   return { quests, hatched };
 }

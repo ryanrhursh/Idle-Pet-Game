@@ -291,9 +291,30 @@ const LOOKS = {
   dragon: { fur: '#5bbf7a', belly: '#f5e7a1', ears: 'none', horns: '#fff4d6', wings: true, wingColor: '#3f8f5a', spikes: '#3f8f5a', tail: 'long', size: 1.25 },
 };
 
+// Shiny pets are the same model in a different colour scheme: hues turn about half way round the colour
+// wheel, pale and white colours (a panda's fur) become pastels, near-black bits (eyes) stay put,
+// and a faint glow makes them stand out in the town. One tinted copy of each material is shared.
+const shinyCache = new Map();
+function shinyMat(src) {
+  let out = shinyCache.get(src);
+  if (!out) {
+    out = src.clone();
+    const hsl = {};
+    src.color.getHSL(hsl, THREE.SRGBColorSpace); // measure in sRGB: that is how colours look on screen
+    if (hsl.l > 0.2) {
+      const pale = hsl.l > 0.8; // white and cream become a clear pastel instead of staying white
+      out.color.setHSL((hsl.h + 0.45) % 1, Math.min(1, hsl.s * 1.1 + (pale ? 0.55 : 0.4)), pale ? 0.8 : hsl.l, THREE.SRGBColorSpace);
+      out.emissive = out.color.clone();
+      out.emissiveIntensity = 0.22;
+    }
+    shinyCache.set(src, out);
+  }
+  return out;
+}
+
 // Returns a THREE.Group facing +z, ~0.35 units tall, feet at y=0.
 // userData.parts holds bits the animator wiggles.
-export function buildPet(speciesId) {
+export function buildPet(speciesId, shiny = false) {
   const L = LOOKS[speciesId];
   const root = new THREE.Group();
   const bodyG = new THREE.Group(); // bobs while walking
@@ -413,6 +434,7 @@ export function buildPet(speciesId) {
   else if (L.tail === 'flat') tail = m(box(0.08, 0.02, 0.14), tc, 0, 0.04, -0.2, { rx: 0.2 });
   if (tail) bodyG.add(tail);
 
+  if (shiny) root.traverse((o) => { if (o.isMesh) o.material = shinyMat(o.material); });
   root.scale.setScalar(L.size || 1);
   root.userData.parts = { bodyG, headG, legs, tail };
   return root;

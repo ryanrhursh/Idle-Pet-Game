@@ -176,7 +176,7 @@ export class World {
   }
 
   addPet(state, pet) {
-    const obj = buildPet(pet.species);
+    const obj = buildPet(pet.species, !!pet.shiny);
     const rarity = SPECIES[pet.species].rarity;
     if (rarity !== 'common') {
       const ring = new THREE.Mesh(

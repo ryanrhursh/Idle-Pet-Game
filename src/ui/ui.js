@@ -8,28 +8,29 @@ import {
   homeCapacity, jobSlots, maxLevelOf, netRates, outputMul, residentsOf, totalHousing, upgradeCost, workersOf, workerMul,
   buildingRateMul,
 } from '../game/sim.js';
-import { QUESTS, claimable, isClaimed, questProgress, questSummary, rewardText, upcoming } from '../game/quests.js';
+import { QUESTS, claimable, questProgress, questSummary, rewardText, upcoming } from '../game/quests.js';
+import { readyRequests, requestIcon, requestStatus, requestText } from '../game/requests.js';
+import { featuredChance, featuredEndsAt, featuredSpecies } from '../game/featured.js';
+import { fmt } from '../game/util.js';
 import { daylight } from '../render/stage.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const RARITY_ORDER = ['legendary', 'epic', 'rare', 'uncommon', 'common'];
 
-export function fmt(n) {
-  if (!Number.isFinite(n)) return '0';
-  const a = Math.abs(n);
-  if (a >= 1e9) return (n / 1e9).toFixed(1) + 'B';
-  if (a >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-  if (a >= 1e4) return (n / 1e3).toFixed(1) + 'K';
-  if (a >= 100) return Math.floor(n).toString();
-  if (a >= 10) return n.toFixed(0);
-  return n.toFixed(1).replace(/\.0$/, '');
-}
+export { fmt };
 
 function fmtRate(n) {
   if (Math.abs(n) < 0.005) return '';
   const s = Math.abs(n) < 0.1 ? Math.abs(n).toFixed(2) : fmt(Math.abs(n));
   return `${n > 0 ? '+' : '−'}${s}/s`;
+}
+
+// "2d 5h" / "5h 12m" for the featured-egg countdown.
+function fmtLeft(ms) {
+  const m = Math.max(1, Math.floor(ms / 60000));
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m % 60}m` : `${m}m`;
 }
 
 function fmtDuration(sec) {
@@ -89,6 +90,11 @@ export class UI {
       root.addEventListener('change', dispatch);
     }
     this.modal.addEventListener('click', (e) => { if (e.target === this.modal) this.closeModal(); });
+    // The open sheet refreshes about once a second. A refresh between press and release would swallow the tap,
+    // so refreshes wait while a finger is down (with a time limit in case the release never arrives).
+    this.pressedAt = 0;
+    this.sheetBody.addEventListener('pointerdown', () => { this.pressedAt = performance.now(); });
+    for (const type of ['pointerup', 'pointercancel']) addEventListener(type, () => { this.pressedAt = 0; });
   }
 
   // ---------- sheets ----------
@@ -113,6 +119,7 @@ export class UI {
   // Re-render the open sheet, unless the player is mid-way through using a control.
   refresh(force = false) {
     if (!this.view) return;
+    if (!force && this.pressedAt && performance.now() - this.pressedAt < 1500) return;
     const a = document.activeElement;
     if (!force && a && this.sheet.contains(a) && (a.tagName === 'SELECT' || a.tagName === 'INPUT')) return;
     this.render();
@@ -190,8 +197,8 @@ export class UI {
   petRow(s, p, extra = '') {
     const sp = SPECIES[p.species];
     return `<div class="pet-row" data-act="openPet" data-id="${p.id}">
-      <img src="${this.petImg(p.species)}" alt="">
-      <div class="grow"><b>${esc(p.name)}</b> <small style="color:${RARITIES[sp.rarity].color}">${sp.name} · Lv ${p.level}</small></div>
+      <img src="${this.petImg(p.species, p.shiny)}" alt="">
+      <div class="grow"><b>${p.shiny ? '✨ ' : ''}${esc(p.name)}</b> <small style="color:${RARITIES[sp.rarity].color}">${sp.name} · Lv ${p.level}</small></div>
       <span class="mood">${mood(p.happiness)}</span>${extra}
     </div>`;
   }
@@ -243,6 +250,23 @@ export class UI {
     const homeless = s.pets.filter((p) => p.homeId == null).length;
     const jobless = s.pets.filter((p) => p.jobId == null).length;
     const f = this.petFilter;
+    const meadow = s.meadow || [];
+    const chips = `<button class="chip ${f === 'meadow' ? 'on' : ''}" data-act="petFilter" data-f="meadow">🌼 Meadow ${meadow.length}</button>`;
+    if (f === 'meadow') {
+      const full = s.pets.length >= CONFIG.maxPets;
+      let body = `<div class="row"><button class="chip" data-act="petFilter" data-f="all">← Town ${s.pets.length}/${CONFIG.maxPets}</button>${chips}</div>
+        <p class="hint">🌼 Pets in the Meadow live happily out of town. They keep their level and shininess, and the Petdex remembers them. Bring one back whenever the town has room.</p>`;
+      if (full && meadow.length) body += `<p class="warn">The town is full. Send someone to the Meadow first.</p>`;
+      body += [...meadow].reverse().map((p) => {
+        const sp = SPECIES[p.species];
+        return `<div class="pet-row static">
+          <img src="${this.petImg(p.species, p.shiny)}" alt="">
+          <div class="grow"><b>${p.shiny ? '✨ ' : ''}${esc(p.name)}</b> <small style="color:${RARITIES[sp.rarity].color}">${sp.name} · Lv ${p.level}</small></div>
+          <button class="btn small" data-act="recall" data-id="${p.id}" ${full ? 'disabled' : ''}>Bring back</button>
+        </div>`;
+      }).join('') || '<p class="hint">Nobody is in the Meadow yet. Open a pet and tap "Send to the Meadow" to make room in town.</p>';
+      return { title: '🌼 Meadow', body };
+    }
     let pets = [...s.pets];
     if (f === 'homeless') pets = pets.filter((p) => p.homeId == null);
     if (f === 'jobless') pets = pets.filter((p) => p.jobId == null);
@@ -251,6 +275,7 @@ export class UI {
       <button class="chip ${f === 'all' ? 'on' : ''}" data-act="petFilter" data-f="all">All ${s.pets.length}</button>
       <button class="chip ${f === 'homeless' ? 'on' : ''}" data-act="petFilter" data-f="homeless">🏚️ Homeless ${homeless}</button>
       <button class="chip ${f === 'jobless' ? 'on' : ''}" data-act="petFilter" data-f="jobless">💤 Jobless ${jobless}</button>
+      ${chips}
     </div>
     <p class="hint">🛏️ ${s.pets.filter((p) => p.homeId != null).length}/${totalHousing(s)} beds used. Free beds attract strays.</p>
     <div class="row"><button class="btn primary" data-act="autoAssign">✨ Auto-assign homes & jobs</button></div>`;
@@ -282,9 +307,10 @@ export class UI {
       return `<option value="${b.id}" ${p.jobId === b.id ? 'selected' : ''} ${full ? 'disabled' : ''}>${b.type === sp.favJob ? '⭐ ' : ''}${BUILDINGS[b.type].emoji} ${BUILDINGS[b.type].name} (${workersOf(s, b.id).length}/${jobSlots(b)})</option>`;
     }).join('');
     const body = `
-      <div class="hero"><img class="big" src="${this.petImg(p.species)}" alt="">
+      <div class="hero"><img class="big" src="${this.petImg(p.species, p.shiny)}" alt="">
         <div>
           <p><b style="color:${rar.color}">${rar.name}</b> ${sp.name}</p>
+          ${p.shiny ? `<p class="shiny-tag">✨ <b>Shiny!</b> <small>+${Math.round(CONFIG.shinyBonus * 100)}% output</small></p>` : ''}
           <p>Level ${p.level}${p.level < CONFIG.maxPetLevel ? ` <span class="bar"><i style="width:${Math.min(100, (p.xp / need) * 100)}%"></i></span>` : ' (max)'}</p>
           <p>Trait: <b>${trait.name}</b> <small>${trait.desc}</small></p>
           <p>Dream job: ${fav.emoji} ${fav.name}</p>
@@ -299,13 +325,34 @@ export class UI {
       <div class="row">
         <button class="btn" data-act="rename" data-id="${p.id}">✏️ Rename</button>
         <button class="btn" data-act="findPet" data-id="${p.id}">📍 Find in town</button>
+        <button class="btn" data-act="retire" data-id="${p.id}">🌼 Send to the Meadow</button>
         <button class="btn" data-act="tab" data-tab="pets">← All pets</button>
       </div>`;
     return { title: esc(p.name), body };
   }
 
+  // The weekly featured egg: which species is boosted, how much, and how long it lasts.
+  featuredCard(s) {
+    const now = Date.now();
+    const id = featuredSpecies(now);
+    const sp = SPECIES[id];
+    const rar = RARITIES[sp.rarity];
+    const odds = Object.entries(EGGS).map(([eid, egg]) => {
+      const p = featuredChance(eid, now);
+      return `${egg.emoji} ${p > 0 ? `${(p * 100).toFixed(1)}%` : '—'}`;
+    }).join(' · ');
+    return `<div class="featured" style="--rc:${rar.color}">
+      <img src="${this.petImg(id)}" alt="">
+      <div><small class="kicker">⭐ Featured this week</small>
+        <b>${sp.name} <small style="color:${rar.color}">${rar.name}</small></b>
+        <small>×${CONFIG.featuredBoost} more likely among ${rar.name} pets${s.discovered[id] ? '' : ' · not found yet!'}</small>
+        <small>Chance per egg: ${odds}</small>
+        <small class="left">⏳ ${fmtLeft(featuredEndsAt(now) - now)} left</small></div>
+    </div>`;
+  }
+
   viewHatch(s) {
-    let body = `<p class="hint">Make 🍬 treats at a Treat Factory (it eats food), then hatch eggs to find new citizens. Every new species discovered boosts all production by ${Math.round(CONFIG.collectionBonus * 100)}%.</p>
+    let body = this.featuredCard(s) + `<p class="hint">Make 🍬 treats at a Treat Factory (it eats food), then hatch eggs to find new citizens. Every new species discovered boosts all production by ${Math.round(CONFIG.collectionBonus * 100)}%.</p>
       <p class="hint">Each egg you hatch makes the next one ${Math.round((EGGS.basic.costScale - 1) * 100)}% pricier. Stockpiling coins and food? Nest Eggs turn them into pets.</p><div class="cards">`;
     for (const [id, egg] of Object.entries(EGGS)) {
       const cost = eggCost(s, id);
@@ -316,9 +363,24 @@ export class UI {
     }
     body += `</div>`;
     const free = totalHousing(s) - s.pets.filter((p) => p.homeId != null).length;
-    if (s.pets.length >= CONFIG.maxPets) body += `<p class="warn">🏙️ The town is full (${CONFIG.maxPets} citizens).</p>`;
+    if (s.pets.length >= CONFIG.maxPets) body += `<p class="warn">🏙️ The town is full (${CONFIG.maxPets} citizens). Send pets to the 🌼 Meadow (Pets tab) to make room.</p>`;
     else if (free <= 0) body += `<p class="warn">⚠️ No free beds. New pets will be homeless until you build more homes.</p>`;
     return { title: '🥚 Hatchery', body };
+  }
+
+  requestRow(s, r) {
+    const st = requestStatus(s, r);
+    const pct = Math.round((st.have / st.need) * 100);
+    return `<div class="quest request ${st.ready ? 'ready' : ''}">
+      <div class="q-icon">${requestIcon(s, r)}</div>
+      <div class="grow"><b>${esc(requestText(s, r))}</b>
+        <span class="bar wide"><i style="width:${pct}%"></i></span><small>${fmt(st.have)} / ${fmt(st.need)}</small>
+        <small class="reward">Reward: ${rewardText(r.reward)}</small></div>
+      <div class="req-btns">
+        <button class="btn primary small" data-act="claimRequest" data-id="${r.id}" ${st.ready ? '' : 'disabled'}>${r.type === 'give' ? 'Give' : 'Claim'}</button>
+        <button class="chip" data-act="skipRequest" data-id="${r.id}" title="Swap for a different request" aria-label="Swap for a different request">↻</button>
+      </div>
+    </div>`;
   }
 
   viewGoals(s) {
@@ -330,18 +392,21 @@ export class UI {
       const pct = Math.round((cur / q.goal) * 100);
       return `<div class="quest ${state}">
         <div class="q-icon">${q.icon}</div>
-        <div class="grow"><b>${q.title}</b><small>${q.desc}</small>
+        <div class="grow"><b>${q.title}${q.endless ? ' <span class="tag" title="Endless goal: a new one appears after each">♾️</span>' : ''}</b><small>${q.desc}</small>
           ${state === 'ready' ? '' : `<span class="bar wide"><i style="width:${pct}%"></i></span><small>${fmt(cur)} / ${fmt(q.goal)}</small>`}
           <small class="reward">Reward: ${rewardText(q.reward)}</small></div>
         ${state === 'ready' ? `<button class="btn primary small" data-act="claimQuest" data-id="${q.id}">Claim</button>` : ''}
       </div>`;
     };
-    let body = `<p class="hint">🎯 ${sum.done} of ${sum.total} goals done. Finish goals to earn coins, wood, treats and free eggs.</p>`;
+    let body = `<p class="hint">🎯 ${sum.done} of ${sum.total} goals done${sum.endless ? ` · ♾️ ${sum.endless} endless goal${sum.endless > 1 ? 's' : ''}` : ''}. Finish goals to earn coins, wood, treats and free eggs.</p>`;
     if (ready.length > 1) body += `<div class="row"><button class="btn primary wide" data-act="claimAll">🎁 Claim all (${ready.length})</button></div>`;
     if (ready.length) body += `<h3>Ready to claim</h3>` + ready.map((q) => row(q, 'ready')).join('');
+    body += `<h3>📮 Town requests <small class="hint">${s.requests.done} finished</small></h3>`;
+    body += s.requests.active.map((r) => this.requestRow(s, r)).join('') || '<p class="hint">Nobody needs anything right now.</p>';
+    body += `<p class="hint">Neighbours ask for what the town can afford soon. A new request appears when you finish or swap one (↻).</p>`;
     if (next.length) body += `<h3>Up next</h3>` + next.map((q) => row(q, 'todo')).join('');
-    else if (!ready.length) body += `<p class="hint">🏆 You've finished every goal. Legend!</p>`;
-    const left = sum.total - sum.done - ready.length - next.length;
+    else if (!ready.length) body += `<p class="hint">🏆 Nothing left to do right now. Legend!</p>`;
+    const left = QUESTS.filter((q) => !(s.quests.claimed[q.id]) && q.progress(s) < q.goal).length - next.filter((q) => !q.endless).length;
     if (left > 0) body += `<p class="hint">…and ${left} more goals to discover.</p>`;
     return { title: '🎯 Goals', body };
   }
@@ -349,13 +414,16 @@ export class UI {
   viewDex(s) {
     const found = Object.keys(s.discovered).length;
     const total = Object.keys(SPECIES).length;
-    let body = `<p class="hint">${found}/${total} species found · production bonus +${Math.round((collectionMul(s) - 1) * 100)}%</p><div class="dex">`;
+    const shinies = Object.keys(s.shinyFound || {}).length;
+    let body = `<p class="hint">${found}/${total} species found · ✨ ${shinies}/${total} shiny found · production bonus +${Math.round((collectionMul(s) - 1) * 100)}%</p>
+      <p class="hint">Shiny pets work ${Math.round(CONFIG.shinyBonus * 100)}% faster. About 1 egg in 30 holds one.</p><div class="dex">`;
     for (const r of RARITY_ORDER.slice().reverse()) {
       for (const [id, sp] of Object.entries(SPECIES)) {
         if (sp.rarity !== r) continue;
         const owned = s.pets.filter((p) => p.species === id).length;
+        const inMeadow = (s.meadow || []).filter((p) => p.species === id).length;
         body += s.discovered[id]
-          ? `<div class="dex-cell" style="--rc:${RARITIES[r].color}"><img src="${this.petImg(id)}" alt=""><b>${sp.name}</b><small>${owned ? `×${owned}` : 'moved away'}</small></div>`
+          ? `<div class="dex-cell" style="--rc:${RARITIES[r].color}"><div class="dex-imgs"><img src="${this.petImg(id)}" alt="">${s.shinyFound && s.shinyFound[id] ? `<img class="mini" src="${this.petImg(id, true)}" alt="shiny">` : ''}</div><b>${sp.name}</b><small>${owned ? `×${owned}` : ''}${inMeadow ? `${owned ? ' · ' : ''}🌼${inMeadow}` : owned ? '' : 'moved away'}</small><small class="sh">${s.shinyFound && s.shinyFound[id] ? '✨ shiny found' : '✨ ?'}</small></div>`
           : `<div class="dex-cell unknown" style="--rc:${RARITIES[r].color}"><div class="q">?</div><b>???</b><small>${RARITIES[r].name}</small></div>`;
       }
     }
@@ -373,6 +441,9 @@ export class UI {
         <li>Each species has a ⭐ dream job where it works 50% faster.</li>
         <li>Free beds attract stray pets. Treats 🍬 hatch eggs for rarer pets.</li>
         <li>Check the 🎯 Goals tab for what to do next. Finishing goals pays rewards.</li>
+        <li>Neighbours post 📮 <b>Town requests</b> in the Goals tab: hand over what they ask for, or build, hatch or expand, to earn rewards. Swap any you don't like with ↻.</li>
+        <li>Town full? Open a pet and tap <b>Send to the Meadow</b>: it frees a spot, and you can bring the pet back later while there's room.</li>
+        <li>About 1 egg in 30 hatches a ✨ <b>shiny</b> pet (+15% output). Each week one species is the ⭐ featured egg in the Hatch tab.</li>
         <li>Spend big on upgrades, more land and one-of-a-kind wonders. They boost the whole town.</li>
         <li>Happy pets work harder: add gardens and fountains.</li>
         <li>The town keeps working while you're away (up to ${CONFIG.maxOfflineSeconds / 3600}h).</li>
@@ -382,7 +453,10 @@ export class UI {
       <ul class="factors">
         <li><span>Day</span><b>${days}</b></li>
         <li><span>Citizens</span><b>${s.pets.length}</b></li>
-        <li><span>Goals done</span><b>${questSummary(s).done}/${QUESTS.length}</b></li>
+        <li><span>Goals done</span><b>${questSummary(s).done}/${QUESTS.length}${questSummary(s).endless ? ` +${questSummary(s).endless}♾️` : ''}</b></li>
+        <li><span>Pets in the Meadow</span><b>${(s.meadow || []).length}</b></li>
+        <li><span>Town requests done</span><b>${s.requests.done}</b></li>
+        <li><span>Shiny species found</span><b>${Object.keys(s.shinyFound || {}).length}/${Object.keys(SPECIES).length}</b></li>
         <li><span>Eggs hatched</span><b>${s.stats.hatched}</b></li>
         <li><span>Strays adopted</span><b>${s.stats.strays}</b></li>
         <li><span>Coins earned</span><b>${fmt(s.stats.coinsEarned)}</b></li>
@@ -424,13 +498,13 @@ export class UI {
   // The little "next goal" pill under the resource bar. Only touched when its text changes,
   // so a tap on it is never lost to a re-render.
   renderGoal(s) {
-    const ready = claimable(s);
+    const count = claimable(s).length + readyRequests(s).length;
     const next = upcoming(s, 1)[0];
     let html = '';
-    if (ready.length) html = `<button class="goal-pill ready">🎁 ${ready.length} reward${ready.length > 1 ? 's' : ''} ready!</button>`;
-    else if (next) html = `<button class="goal-pill">${next.icon} ${next.title} <small>${fmt(questProgress(s, next))}/${fmt(next.goal)}</small></button>`;
+    if (count) html = `<button class="goal-pill ready" data-act="tab" data-tab="goals">🎁 ${count} reward${count > 1 ? 's' : ''} ready!</button>`;
+    else if (next) html = `<button class="goal-pill" data-act="tab" data-tab="goals">${next.icon} ${next.title} <small>${fmt(questProgress(s, next))}/${fmt(next.goal)}</small></button>`;
     const dot = $('#tabs [data-tab=goals] .dot');
-    if (dot) dot.hidden = !ready.length;
+    if (dot) dot.hidden = !count;
     if (html !== this.goalHtml) {
       this.goalHtml = html;
       this.goal.innerHTML = html;
@@ -481,12 +555,13 @@ export class UI {
     this.showModal(`<h2>Welcome back!</h2><p>Your town kept busy for ${fmtDuration(offline.seconds)}${offline.capped ? ' (max)' : ''}.</p><ul class="factors">${lines}${pets}</ul><button class="btn primary wide" data-act="closeModal">Yay!</button>`);
   }
 
-  showHatch(pet, isNew) {
+  showHatch(pet, isNew, isNewShiny = false) {
     const sp = SPECIES[pet.species];
     const rar = RARITIES[sp.rarity];
-    this.showModal(`<div class="reveal" style="--rc:${rar.color}">
-      <img class="big spin" src="${this.petImg(pet.species)}" alt="">
-      <h2>${esc(pet.name)}</h2>
+    this.showModal(`<div class="reveal" style="--rc:${pet.shiny ? '#ffd23f' : rar.color}">
+      ${pet.shiny ? `<p class="shiny-banner">✨ SHINY! ✨${isNewShiny ? '<br><small>A new shiny for your Petdex!</small>' : ''}</p>` : ''}
+      <img class="big spin" src="${this.petImg(pet.species, pet.shiny)}" alt="">
+      <h2>${pet.shiny ? '✨ ' : ''}${esc(pet.name)}</h2>
       <p><b style="color:${rar.color}">${rar.name}</b> ${sp.name}${isNew ? ' · <b class="new">NEW!</b>' : ''}</p>
       <p><small>${TRAITS[pet.trait].name}: ${TRAITS[pet.trait].desc}</small></p>
       <div class="row center"><button class="btn primary" data-act="closeModal">Welcome!</button><button class="btn" data-act="openPetModal" data-id="${pet.id}">View</button></div>

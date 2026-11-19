@@ -4,6 +4,7 @@
 import {
   RARITIES, SPECIES, TRAITS, BUILDINGS, EGGS, STRAY_WEIGHTS, PET_NAMES, CONFIG, xpForLevel,
 } from './data.js';
+import { featuredSpecies } from './featured.js';
 
 // ---------- helpers ----------
 
@@ -130,17 +131,31 @@ export function createPet(state, speciesId, rng = Math.random) {
   return { pet, isNew };
 }
 
-export function randomSpecies(rarity, rng = Math.random) {
+// `featuredId` is the weekly featured species: it counts CONFIG.featuredBoost times in its own rarity's pool.
+export function randomSpecies(rarity, rng = Math.random, featuredId = null) {
   const pool = Object.keys(SPECIES).filter((id) => SPECIES[id].rarity === rarity);
+  if (featuredId && pool.includes(featuredId)) {
+    return pickWeighted(Object.fromEntries(pool.map((id) => [id, id === featuredId ? CONFIG.featuredBoost : 1])), rng);
+  }
   return pickOne(pool, rng);
 }
 
+// Turns a pet shiny and records it in the Petdex. Returns true when this species' shiny is new.
+export function makeShiny(state, pet) {
+  pet.shiny = true;
+  state.shinyFound = state.shinyFound || {};
+  const isNew = !state.shinyFound[pet.species];
+  state.shinyFound[pet.species] = true;
+  return isNew;
+}
+
 export function petLabel(pet) {
-  return `${SPECIES[pet.species].emoji} ${pet.name}`;
+  return `${pet.shiny ? '✨' : ''}${SPECIES[pet.species].emoji} ${pet.name}`;
 }
 
 // free = a gift (quest reward): costs nothing and doesn't make later eggs pricier.
-export function hatch(state, eggId, rng = Math.random, free = false) {
+// `now` only matters for the weekly featured species.
+export function hatch(state, eggId, rng = Math.random, free = false, now = Date.now()) {
   const egg = EGGS[eggId];
   if (!egg) return { ok: false, msg: 'Unknown egg.' };
   if (state.pets.length >= CONFIG.maxPets) return { ok: false, msg: `The town is full (${CONFIG.maxPets} citizens).` };
@@ -150,12 +165,45 @@ export function hatch(state, eggId, rng = Math.random, free = false) {
     pay(state, cost);
   }
   const rarity = pickWeighted(egg.weights, rng);
-  const { pet, isNew } = createPet(state, randomSpecies(rarity, rng), rng);
+  const { pet, isNew } = createPet(state, randomSpecies(rarity, rng, featuredSpecies(now)), rng);
+  const shiny = rng() < (egg.shinyChance ?? CONFIG.shinyChance);
+  const isNewShiny = shiny ? makeShiny(state, pet) : false;
+  if (shiny) state.stats.shinies = (state.stats.shinies || 0) + 1;
   if (!free) state.stats.hatched++;
   if (state.settings.autoAssign) autoAssignPet(state, pet);
   const sp = SPECIES[pet.species];
-  emit(state, `${sp.emoji} ${pet.name} the ${RARITIES[rarity].name} ${sp.name} hatched!${isNew ? ' (New species!)' : ''}`, rarity === 'common' ? 'good' : 'great');
-  return { ok: true, pet, isNew };
+  const shinyText = shiny ? 'shiny ' : '';
+  emit(state, `${shiny ? '✨ ' : ''}${sp.emoji} ${pet.name} the ${shinyText}${RARITIES[rarity].name} ${sp.name} hatched!${isNew ? ' (New species!)' : ''}${isNewShiny ? ' (New shiny!)' : ''}`, rarity === 'common' && !shiny ? 'good' : 'great');
+  return { ok: true, pet, isNew, shiny, isNewShiny };
+}
+
+// ---------- the Meadow ----------
+// A pet can retire to the Meadow: it leaves town (freeing a slot under the 100-citizen limit) but keeps its
+// level, name and shininess, and the Petdex keeps the species. It can come back whenever the town has room.
+
+export function retirePet(state, petId) {
+  const pet = getPet(state, petId);
+  if (!pet) return { ok: false, msg: 'No such pet.' };
+  pet.homeId = null;
+  pet.jobId = null;
+  state.pets = state.pets.filter((p) => p.id !== petId);
+  state.meadow = state.meadow || [];
+  state.meadow.push(pet);
+  if (state.settings.autoAssign) autoAssignAll(state);
+  emit(state, `🌼 ${petLabel(pet)} moved to the Meadow.`);
+  return { ok: true, pet };
+}
+
+export function recallPet(state, petId) {
+  const meadow = state.meadow || [];
+  const pet = meadow.find((p) => p.id === petId);
+  if (!pet) return { ok: false, msg: 'That pet is not in the Meadow.' };
+  if (state.pets.length >= CONFIG.maxPets) return { ok: false, msg: `The town is full (${CONFIG.maxPets} citizens). Send someone to the Meadow first.` };
+  state.meadow = meadow.filter((p) => p.id !== petId);
+  state.pets.push(pet);
+  if (state.settings.autoAssign) autoAssignPet(state, pet);
+  emit(state, `🏡 ${petLabel(pet)} came back from the Meadow.`, 'good');
+  return { ok: true, pet };
 }
 
 // ---------- assignment ----------
@@ -329,6 +377,7 @@ export function workerMul(state, pet) {
   if (job.type === SPECIES[pet.species].favJob) m *= 1 + CONFIG.favJobBonus;
   m *= 0.5 + pet.happiness / 100; // 0.5x when miserable .. 1.5x when ecstatic
   m *= trait.output || 1;
+  if (pet.shiny) m *= 1 + CONFIG.shinyBonus;
   if (trait.social) {
     const coworkers = workersOf(state, job.id).length - 1;
     m *= 1 + Math.min(3, coworkers) * trait.social;
@@ -404,10 +453,13 @@ export function tick(state, dt, rng = Math.random) {
   r.food = food;
   if (state.starving && !wasStarving) emit(state, 'Your pets are hungry! Build or staff more farms.', 'bad');
 
-  for (const res of ['coins', 'wood', 'treats']) {
+  // lifetime totals (drive the endless goals); `|| 0` keeps older saves working
+  const st = state.stats;
+  st.foodEarned = (st.foodEarned || 0) + prod.food * dt;
+  for (const [res, stat] of [['coins', 'coinsEarned'], ['wood', 'woodEarned'], ['treats', 'treatsEarned']]) {
     const gain = (prod[res] + convProd[res] * convEff) * dt;
     r[res] += gain;
-    if (res === 'coins') state.stats.coinsEarned += gain;
+    st[stat] = (st[stat] || 0) + gain;
   }
 
   // workers gain experience

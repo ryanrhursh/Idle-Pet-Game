@@ -3,9 +3,11 @@
 
 import { CONFIG } from './data.js';
 import { createPet, autoAssignAll, simulate } from './sim.js';
+import { ensureRequests, newRequests } from './requests.js';
 
 const SAVE_KEY = 'pawville-save-v1';
 export const SAVE_VERSION = 1;
+const NEW_STATS = { hatched: 0, strays: 0, coinsEarned: 0, woodEarned: 0, foodEarned: 0, treatsEarned: 0, shinies: 0 };
 
 export function createNewGame(rng = Math.random) {
   const state = {
@@ -15,13 +17,16 @@ export function createNewGame(rng = Math.random) {
     rows: CONFIG.startRows,
     buildings: [],
     pets: [],
+    meadow: [], // retired pets (full pet records), see retirePet()
     nextId: 1,
     discovered: {},
+    shinyFound: {}, // species -> true once a shiny of it has hatched (the Petdex "shiny found" mark)
     strayTimer: 30,
     starving: false,
     settings: { autoAssign: true, sfx: true, music: true },
-    stats: { hatched: 0, strays: 0, coinsEarned: 0 },
+    stats: { ...NEW_STATS },
     quests: { claimed: {} },
+    requests: newRequests(),
     log: [],
     events: [],
     savedAt: Date.now(),
@@ -33,6 +38,7 @@ export function createNewGame(rng = Math.random) {
   createPet(state, 'bunny', rng);
   createPet(state, 'beaver', rng);
   autoAssignAll(state);
+  ensureRequests(state);
   return state;
 }
 
@@ -63,8 +69,14 @@ export function loadGame(storage = globalThis.localStorage, now = Date.now()) {
   state.events = [];
   state.settings = { autoAssign: true, sfx: true, music: true, ...state.settings };
   // saves from older versions of the game: fill in anything added since
-  state.stats = { hatched: 0, strays: 0, coinsEarned: 0, ...state.stats };
+  const shiniesBefore = state.stats && state.stats.shinies; // not tracked before the Meadow: count the shinies in town
+  state.stats = { ...NEW_STATS, ...state.stats };
+  if (shiniesBefore == null) state.stats.shinies = (state.pets || []).filter((p) => p.shiny).length;
+  if (!Array.isArray(state.meadow)) state.meadow = [];
   state.quests = { claimed: {}, ...state.quests };
+  state.shinyFound = { ...state.shinyFound };
+  state.requests = { ...newRequests(), ...(state.requests && typeof state.requests === 'object' ? state.requests : {}) };
+  if (!Array.isArray(state.requests.active)) state.requests.active = [];
   const away = Math.max(0, (now - (state.savedAt || now)) / 1000);
   let offline = null;
   if (away > 30) {
@@ -75,6 +87,7 @@ export function loadGame(storage = globalThis.localStorage, now = Date.now()) {
     state.events = []; // don't toast every offline event
     offline = { seconds, capped: away > CONFIG.maxOfflineSeconds, delta };
   }
+  ensureRequests(state); // older saves get their first Town Requests here, sized to the town as it is now
   return { state, offline };
 }
 

@@ -3,13 +3,14 @@ import { BUILDINGS, CONFIG, SPECIES } from './game/data.js';
 import { loadGame, saveGame, resetGame } from './game/state.js';
 import {
   assignHome, assignJob, autoAssignAll, build, buildingAt, demolish, expandLand, getBuilding,
-  getPet, hatch, simulate, tick, upgrade,
+  getPet, hatch, recallPet, retirePet, simulate, tick, upgrade,
 } from './game/sim.js';
 import { setActive, setAudioSettings, setNight, sfx, unlock } from './audio.js';
 import { Stage, daylight } from './render/stage.js';
 import { World } from './render/world.js';
 import { buildBuilding, buildPet, portrait } from './render/models.js';
 import { claimAll, claimQuest, claimable } from './game/quests.js';
+import { completeRequest, ensureRequests, readyRequests, requestText, skipRequest } from './game/requests.js';
 import { UI } from './ui/ui.js';
 
 let { state, offline } = loadGame();
@@ -18,7 +19,7 @@ const stage = new Stage(document.getElementById('viewport'));
 const world = new World(stage);
 world.sync(state);
 
-const petImg = (species) => portrait(stage.renderer, `pet:${species}`, () => buildPet(species));
+const petImg = (species, shiny = false) => portrait(stage.renderer, `pet:${species}${shiny ? ':shiny' : ''}`, () => buildPet(species, shiny));
 const buildingImg = (type) => portrait(stage.renderer, `b:${type}`, () => buildBuilding(type, 1, { pips: false }));
 
 let placing = null; // building type waiting for a tile tap
@@ -111,6 +112,24 @@ const actions = {
     world.selectedPetId = +id;
     world.focusPet(+id);
   },
+  retire: ({ id }) => {
+    const p = getPet(state, +id);
+    if (!p) return;
+    ui.confirm(`<h2>Send ${p.name} to the Meadow?</h2><p>${p.name} leaves town and frees a spot. They keep their level${p.shiny ? ' and shine' : ''}, the Petdex remembers them, and you can bring them back later while there's room.</p>`, 'confirmRetire', { id });
+  },
+  confirmRetire: ({ id }) => {
+    ui.closeModal();
+    const r = result(retirePet(state, +id));
+    if (!r.ok) return;
+    sfx('chime');
+    world.selectedPetId = null;
+    ui.petFilter = 'all';
+    ui.open('pets');
+  },
+  recall: ({ id }) => {
+    const r = result(recallPet(state, +id));
+    if (r.ok) sfx('good');
+  },
   rename: ({ id }) => {
     const p = getPet(state, +id);
     const name = prompt('New name:', p.name);
@@ -124,8 +143,8 @@ const actions = {
     if (!r.ok) return result(r);
     state.events = []; // the reveal modal replaces the toast
     changed();
-    sfx('hatch', SPECIES[r.pet.species].rarity);
-    ui.showHatch(r.pet, r.isNew);
+    sfx('hatch', r.shiny ? 'legendary' : SPECIES[r.pet.species].rarity);
+    ui.showHatch(r.pet, r.isNew, r.isNewShiny);
   },
   claimQuest: ({ id }) => {
     const r = claimQuest(state, id);
@@ -136,6 +155,16 @@ const actions = {
     const r = claimAll(state);
     if (r.quests.length) showRewards(r.hatched);
   },
+  claimRequest: ({ id }) => {
+    const r = completeRequest(state, +id);
+    if (!r.ok) return result(r);
+    showRewards(r.hatched);
+  },
+  skipRequest: ({ id }) => {
+    const r = skipRequest(state, +id);
+    if (r.ok) ui.toast('Request swapped for a new one.', 'info');
+    result(r);
+  },
   toggleAuto: (_, el) => { state.settings.autoAssign = el.checked; },
   toggleSfx: (_, el) => { state.settings.sfx = el.checked; setAudioSettings(state.settings); sfx('chime'); },
   toggleMusic: (_, el) => { state.settings.music = el.checked; setAudioSettings(state.settings); },
@@ -144,6 +173,7 @@ const actions = {
   confirmReset: () => {
     state = resetGame();
     announced.clear();
+    announcedRequests.clear();
     setAudioSettings(state.settings);
     ui.closeModal();
     ui.close();
@@ -159,8 +189,8 @@ function showRewards(hatched) {
     state.events = goalToasts;
     changed();
     const last = hatched[hatched.length - 1];
-    sfx('hatch', SPECIES[last.pet.species].rarity);
-    ui.showHatch(last.pet, last.isNew);
+    sfx('hatch', last.shiny ? 'legendary' : SPECIES[last.pet.species].rarity);
+    ui.showHatch(last.pet, last.isNew, last.isNewShiny);
     if (hatched.length > 1) ui.toast(`${hatched.length} eggs hatched! See them in Pets.`, 'great');
   } else {
     sfx('coin');
@@ -242,6 +272,7 @@ let last = performance.now();
 let lastWall = Date.now();
 let hudTimer = 0, sheetTimer = 0, saveTimer = 0;
 const announced = new Set(claimable(state).map((q) => q.id)); // goals we've already told the player about
+const announcedRequests = new Set(readyRequests(state).map((r) => r.id)); // same for finished Town Requests
 
 function frame(now) {
   requestAnimationFrame(frame);
@@ -279,6 +310,13 @@ function frame(now) {
       ui.toast(`🎯 Goal complete: ${q.title}! Claim it in Goals.`, 'great');
       sfx('chime');
     }
+    for (const r of readyRequests(state)) {
+      if (announcedRequests.has(r.id)) continue;
+      announcedRequests.add(r.id);
+      ui.toast(`📮 ${requestText(state, r)}: done! Claim it in Goals.`, 'great');
+      sfx('chime');
+    }
+    if (state.requests.active.length < 3) ensureRequests(state); // refill if nothing could be asked earlier
     setNight(daylight((state.time % CONFIG.dayLength) / CONFIG.dayLength) < 0.5);
     ui.refresh();
   }

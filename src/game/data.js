@@ -152,7 +152,7 @@ export const EGGS = {
     weights: { common: 65, uncommon: 28, rare: 6, epic: 1, legendary: 0 },
   },
   golden: {
-    name: 'Golden Egg', emoji: '🌟', cost: { treats: 40 }, costScale: 1.06,
+    name: 'Golden Egg', emoji: '🌟', cost: { treats: 40 }, costScale: 1.06, shinyChance: 0.05,
     weights: { common: 0, uncommon: 45, rare: 38, epic: 14, legendary: 3 },
   },
   nest: {
@@ -195,6 +195,9 @@ export const CONFIG = {
   strayMax: 120,
   strayCrowding: 12, // strays arrive (1 + pets / this) times slower, so big towns grow through eggs
   maxOfflineSeconds: 8 * 3600,
+  shinyChance: 0.03, // chance that a hatched pet is shiny (Golden Eggs: EGGS.golden.shinyChance)
+  shinyBonus: 0.15, // a shiny pet works 15% faster
+  featuredBoost: 8, // the weekly featured species counts this many times in its rarity's pool
 };
 
 export function xpForLevel(level) {

@@ -1,5 +1,7 @@
 // Balance check: a greedy "active player" bot plays the sim and prints a snapshot at each game day given.
 // Usage: node scripts/balance-bot.mjs [day ...]     (default: 5 20 50 100 200 350 547)
+// Town Requests: the bot finishes every one it can and skips any request that sat open for 3 days. The snapshot
+// shows how many it finished and what the open ones ask, as a share of the stock and in minutes of income.
 // Look for: stockpiles that grow while nothing is left to buy (= not enough sinks), or progress
 // that stalls early. One game day is 90 seconds. A perfect player should take ~1000 days to max out.
 import path from 'node:path';
@@ -8,6 +10,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sim = await import(pathToFileURL(root + '/src/game/sim.js'));
 const st = await import(pathToFileURL(root + '/src/game/state.js'));
 const data = await import(pathToFileURL(root + '/src/game/data.js'));
+const rq = await import(pathToFileURL(root + '/src/game/requests.js'));
+const qs = await import(pathToFileURL(root + '/src/game/quests.js'));
+const { fmt } = await import(pathToFileURL(root + '/src/game/util.js'));
 const { BUILDINGS, CONFIG, EGGS } = data;
 let seed = 7; const rng = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
 const s = st.createNewGame(rng);
@@ -42,6 +47,43 @@ function cheapestUpgrade(types) {
     if (c < bc) { bc = c; best = b; }
   }
   return best;
+}
+const openSince = new Map(); // request id -> game time first seen
+const rstats = { done: 0, skipped: 0, byType: {}, paid: {} };
+function serveRequests() {
+  qs.claimAll(s, rng); // the bot claims goals like a player would
+  if (process.env.NOREQ) return; // NOREQ=1 plays without Town Requests, to compare
+  const now = s.time;
+  for (const req of [...s.requests.active]) {
+    if (!openSince.has(req.id)) openSince.set(req.id, now);
+    const st = rq.requestStatus(s, req);
+    let go = st.ready;
+    if (go) {
+      const r = rq.completeRequest(s, req.id, rng);
+      if (r.ok) {
+        rstats.done++; rstats.byType[req.type] = (rstats.byType[req.type] || 0) + 1;
+        for (const [k, v] of Object.entries(req.reward)) rstats.paid[k] = (rstats.paid[k] || 0) + v;
+        if (req.type === 'give') rstats.paid['-' + req.res] = (rstats.paid['-' + req.res] || 0) - req.amount;
+      }
+    } else if (now - openSince.get(req.id) > 3 * DAY) {
+      rq.skipRequest(s, req.id);
+      rstats.skipped++;
+    }
+  }
+  rq.ensureRequests(s);
+}
+function describeRequests() {
+  const net = sim.netRates(s);
+  return s.requests.active.map((r) => {
+    let t = r.type;
+    if (r.type === 'give') {
+      const mins = r.amount / Math.max(0.01, net[r.res]) / 60;
+      t = `give ${fmt(r.amount)} ${r.res} (${Math.round((100 * r.amount) / Math.max(1, s.resources[r.res]))}% of stock, ${mins.toFixed(0)} min of income)`;
+    } else if (r.type === 'build') t = `build ${r.b} lv${r.lv}`;
+    else if (r.type === 'hatch') t = `hatch ${r.n}`;
+    else t = `land ${r.rows}`;
+    return `${t} -> ${qs.rewardText(r.reward)}`;
+  }).join(' | ');
 }
 function step() {
   const net = sim.netRates(s);
@@ -92,10 +134,13 @@ while (next < checkpoints.length) {
   for (let i = 0; i < 15; i++) sim.tick(s, 1, rng);
   t += 15;
   for (let k = 0; k < 6; k++) step();
+  serveRequests();
   if (s.time / DAY >= checkpoints[next]) {
     const lv = s.buildings.reduce((a, b) => a + b.level, 0);
     const net = sim.netRates(s);
     rows.push(`day ${String(checkpoints[next]).padStart(3)} | pets ${String(s.pets.length).padStart(3)} bld ${String(s.buildings.length).padStart(3)} lvls ${String(lv).padStart(4)} rows ${s.rows} | coins ${Math.round(s.resources.coins)} wood ${Math.round(s.resources.wood)} food ${Math.round(s.resources.food)} treats ${Math.round(s.resources.treats)} | net c ${net.coins.toFixed(1)} w ${net.wood.toFixed(1)} f ${net.food.toFixed(1)} t ${net.treats.toFixed(2)} | hatched ${s.stats.hatched} strays ${s.stats.strays} | earned ${Math.round(s.stats.coinsEarned)} disc ${Object.keys(s.discovered).length}`);
+    rows.push(`          requests: finished ${rstats.done} (${Object.entries(rstats.byType).map(([k, v]) => k + ' ' + v).join(', ')}), skipped ${rstats.skipped}, net paid ${JSON.stringify(Object.fromEntries(Object.entries(rstats.paid).map(([k, v]) => [k, Math.round(v)])))}, open: ${describeRequests()}`);
+    rows.push(`          goals: ${Object.keys(s.quests.claimed).length} claimed, shinies found ${Object.keys(s.shinyFound).length}, next endless: ${qs.currentEndless(s).map((q) => q.id).join(' ')}`);
     next++;
   }
 }

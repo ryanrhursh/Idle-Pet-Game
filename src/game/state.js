@@ -19,7 +19,7 @@ export function createNewGame(rng = Math.random) {
     discovered: {},
     strayTimer: 30,
     starving: false,
-    settings: { autoAssign: true },
+    settings: { autoAssign: true, sfx: true, music: true },
     stats: { hatched: 0, strays: 0, coinsEarned: 0 },
     quests: { claimed: {} },
     log: [],
@@ -61,7 +61,7 @@ export function loadGame(storage = globalThis.localStorage, now = Date.now()) {
   }
   if (state.version !== SAVE_VERSION) return { state: createNewGame(), offline: null };
   state.events = [];
-  state.settings = { autoAssign: true, ...state.settings };
+  state.settings = { autoAssign: true, sfx: true, music: true, ...state.settings };
   // saves from older versions of the game: fill in anything added since
   state.stats = { hatched: 0, strays: 0, coinsEarned: 0, ...state.stats };
   state.quests = { claimed: {}, ...state.quests };

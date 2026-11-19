@@ -388,10 +388,13 @@ export class UI {
         <li><span>Coins earned</span><b>${fmt(s.stats.coinsEarned)}</b></li>
       </ul>
       <label class="check"><input type="checkbox" data-act="toggleAuto" ${s.settings.autoAssign ? 'checked' : ''}> Auto-assign new pets to homes & jobs</label>
+      <label class="check"><input type="checkbox" data-act="toggleSfx" ${s.settings.sfx ? 'checked' : ''}> 🔊 Sound effects</label>
+      <label class="check"><input type="checkbox" data-act="toggleMusic" ${s.settings.music ? 'checked' : ''}> 🎵 Music</label>
       <div class="row">
         <button class="btn" data-act="saveNow">💾 Save now</button>
         <button class="btn danger" data-act="reset">🔄 Start over</button>
       </div>
+      <p class="hint">No sound on iPhone? Flip the silent switch on the side of the phone and turn the volume up.</p>
       <p class="hint">Saves automatically on this device. Install it from your browser's menu ("Add to Home Screen" / "Install app") to play like a native app, even offline.</p>`;
     return { title: '⚙️ Menu', body };
   }

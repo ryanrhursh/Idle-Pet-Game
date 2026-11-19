@@ -5,7 +5,8 @@ import {
   assignHome, assignJob, autoAssignAll, build, buildingAt, demolish, expandLand, getBuilding,
   getPet, hatch, simulate, tick, upgrade,
 } from './game/sim.js';
-import { Stage } from './render/stage.js';
+import { setActive, setAudioSettings, setNight, sfx, unlock } from './audio.js';
+import { Stage, daylight } from './render/stage.js';
 import { World } from './render/world.js';
 import { buildBuilding, buildPet, portrait } from './render/models.js';
 import { claimAll, claimQuest, claimable } from './game/quests.js';
@@ -30,7 +31,7 @@ function changed() {
 }
 
 function result(r) {
-  if (r && !r.ok && r.msg) ui.toast(r.msg, 'bad');
+  if (r && !r.ok && r.msg) { ui.toast(r.msg, 'bad'); sfx('bad'); }
   changed();
   return r;
 }
@@ -63,7 +64,7 @@ const actions = {
   pickBuilding: ({ type }) => {
     if (selectedTile && !buildingAt(state, selectedTile.x, selectedTile.y)) {
       const r = result(build(state, type, selectedTile.x, selectedTile.y));
-      if (r.ok) { ui.open('building', { id: r.building.id }); }
+      if (r.ok) { sfx('build'); ui.open('building', { id: r.building.id }); }
       return;
     }
     placing = type;
@@ -73,9 +74,12 @@ const actions = {
   cancelPlace: () => stopPlacing(),
   expand: () => {
     const r = result(expandLand(state));
-    if (r.ok) world.focusTile(3.5, state.rows - 1);
+    if (r.ok) { sfx('expand'); world.focusTile(3.5, state.rows - 1); }
   },
-  upgrade: ({ id }) => result(upgrade(state, +id)),
+  upgrade: ({ id }) => {
+    const r = result(upgrade(state, +id));
+    if (r.ok) sfx('upgrade');
+  },
   demolish: ({ id }) => {
     const b = getBuilding(state, +id);
     ui.confirm(`<h2>Demolish ${BUILDINGS[b.type].name}?</h2><p>Residents and workers will be moved out. You get half the base cost back.</p>`, 'confirmDemolish', { id });
@@ -83,6 +87,7 @@ const actions = {
   confirmDemolish: ({ id }) => {
     ui.closeModal();
     result(demolish(state, +id));
+    sfx('demolish');
     ui.close();
   },
   evict: ({ id }) => result(assignHome(state, +id, null)),
@@ -119,6 +124,7 @@ const actions = {
     if (!r.ok) return result(r);
     state.events = []; // the reveal modal replaces the toast
     changed();
+    sfx('hatch', SPECIES[r.pet.species].rarity);
     ui.showHatch(r.pet, r.isNew);
   },
   claimQuest: ({ id }) => {
@@ -131,11 +137,14 @@ const actions = {
     if (r.quests.length) showRewards(r.hatched);
   },
   toggleAuto: (_, el) => { state.settings.autoAssign = el.checked; },
+  toggleSfx: (_, el) => { state.settings.sfx = el.checked; setAudioSettings(state.settings); sfx('chime'); },
+  toggleMusic: (_, el) => { state.settings.music = el.checked; setAudioSettings(state.settings); },
   saveNow: () => { saveGame(state); ui.toast('Saved!', 'good'); },
   reset: () => ui.confirm('<h2>Start over?</h2><p>This erases your town and all your pets.</p>', 'confirmReset'),
   confirmReset: () => {
     state = resetGame();
     announced.clear();
+    setAudioSettings(state.settings);
     ui.closeModal();
     ui.close();
     changed();
@@ -150,12 +159,23 @@ function showRewards(hatched) {
     state.events = goalToasts;
     changed();
     const last = hatched[hatched.length - 1];
+    sfx('hatch', SPECIES[last.pet.species].rarity);
     ui.showHatch(last.pet, last.isNew);
     if (hatched.length > 1) ui.toast(`${hatched.length} eggs hatched! See them in Pets.`, 'great');
-  } else changed();
+  } else {
+    sfx('coin');
+    changed();
+  }
 }
 
 const ui = new UI({ getState: () => state, actions, petImg, buildingImg });
+// Audio can only start after a tap (browser rule). Every tap on a button also makes a soft click.
+setAudioSettings(state.settings);
+for (const type of ['pointerdown', 'keydown']) addEventListener(type, unlock, { passive: true });
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('button, [data-act], select');
+  if (el && !el.disabled) sfx('tap');
+});
 new ResizeObserver(layoutChanged).observe(document.getElementById('sheet'));
 
 // ---------- tapping the 3D town ----------
@@ -184,6 +204,7 @@ function onTap(hit) {
     const type = placing;
     const r = result(build(state, type, tile.x, tile.y));
     if (r.ok) {
+      sfx('build');
       stopPlacing();
       ui.open('building', { id: r.building.id });
     }
@@ -241,6 +262,8 @@ function frame(now) {
   tick(state, dt);
   if (state.events.length) {
     for (const ev of state.events) ui.toast(ev.msg, ev.kind);
+    const kinds = state.events.map((e) => e.kind);
+    sfx(kinds.includes('bad') ? 'bad' : kinds.includes('great') ? 'chime' : 'good');
     state.events = [];
     world.sync(state);
     ui.refresh();
@@ -254,7 +277,9 @@ function frame(now) {
       if (announced.has(q.id)) continue;
       announced.add(q.id);
       ui.toast(`🎯 Goal complete: ${q.title}! Claim it in Goals.`, 'great');
+      sfx('chime');
     }
+    setNight(daylight((state.time % CONFIG.dayLength) / CONFIG.dayLength) < 0.5);
     ui.refresh();
   }
   if (saveTimer > 10) { saveTimer = 0; saveGame(state); }
@@ -264,7 +289,10 @@ function frame(now) {
   stage.update();
 }
 
-addEventListener('visibilitychange', () => { if (document.hidden) saveGame(state); });
+addEventListener('visibilitychange', () => {
+  if (document.hidden) saveGame(state);
+  setActive(!document.hidden);
+});
 addEventListener('pagehide', () => saveGame(state));
 
 ui.renderHud();

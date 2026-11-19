@@ -15,7 +15,8 @@ const topPetLevel = (s) => s.pets.reduce((m, p) => Math.max(m, p.level), 0);
 const homesBuilt = (s) => s.buildings.filter((b) => BUILDINGS[b.type].type === 'home').length;
 const jobTypesOwned = (s) => new Set(s.buildings.filter((b) => BUILDINGS[b.type].type === 'job').map((b) => b.type)).size;
 const wondersBuilt = (s) => s.buildings.filter((b) => BUILDINGS[b.type].type === 'wonder').length;
-const averageMood = (s) => (s.pets.length ? s.pets.reduce((a, p) => a + p.happiness, 0) / s.pets.length : 0);
+// only counts once the town has a few citizens (the two starters are happy from day 1)
+const averageMood = (s) => (s.pets.length >= 6 ? s.pets.reduce((a, p) => a + p.happiness, 0) / s.pets.length : 0);
 const maxedBuildings = (s) => s.buildings.filter((b) => b.level >= maxLevelOf(b)).length;
 const legendaries = (s) => new Set(s.pets.filter((p) => SPECIES[p.species].rarity === 'legendary').map((p) => p.species)).size;
 
@@ -38,7 +39,7 @@ const LIST = [
   ['rows7', '🗺️', 'Bigger backyard', 'Expand the town to 7 rows.', 7, (s) => s.rows, { coins: 300, wood: 200 }],
   ['fountain', '⛲', 'Town square', 'Build a Fountain Plaza.', 1, owns('fountain'), { coins: 400, treats: 10 }],
   ['trades', '🧰', 'Jack of all trades', 'Own 5 kinds of workplace: Farm, Grove, Market, Bakery and Treat Factory.', 5, jobTypesOwned, { coins: 600, wood: 400, treats: 12 }],
-  ['mood80', '😄', 'Happy town', 'Get the average pet mood up to 80%.', 80, averageMood, { coins: 400, treats: 10 }],
+  ['mood80', '😄', 'Happy town', 'With at least 6 citizens, get the average mood up to 80%.', 80, averageMood, { coins: 400, treats: 10 }],
   ['petlv5', '⭐', 'Rising star', 'Get a pet to level 5.', 5, topPetLevel, { treats: 10 }],
   // ---- chapter 3: thriving ----
   ['pets15', '🏘️', 'Busy streets', 'Have 15 citizens.', 15, pets, { coins: 1500, wood: 1000, basic: 1 }],

@@ -112,6 +112,10 @@ const actions = {
     world.selectedPetId = +id;
     world.focusPet(+id);
   },
+  openTree: ({ id }) => {
+    ui.open('tree', { id: +id });
+    if (getPet(state, +id)) world.selectedPetId = +id;
+  },
   retire: ({ id }) => {
     const p = getPet(state, +id);
     if (!p) return;

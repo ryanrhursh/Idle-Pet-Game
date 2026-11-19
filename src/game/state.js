@@ -4,10 +4,11 @@
 import { CONFIG } from './data.js';
 import { createPet, autoAssignAll, simulate } from './sim.js';
 import { ensureRequests, newRequests } from './requests.js';
+import './social.js'; // registers the friendship / family update on the tick
 
 const SAVE_KEY = 'pawville-save-v1';
 export const SAVE_VERSION = 1;
-const NEW_STATS = { hatched: 0, strays: 0, coinsEarned: 0, woodEarned: 0, foodEarned: 0, treatsEarned: 0, shinies: 0 };
+const NEW_STATS = { hatched: 0, strays: 0, coinsEarned: 0, woodEarned: 0, foodEarned: 0, treatsEarned: 0, shinies: 0, born: 0 };
 
 export function createNewGame(rng = Math.random) {
   const state = {
@@ -22,6 +23,7 @@ export function createNewGame(rng = Math.random) {
     discovered: {},
     shinyFound: {}, // species -> true once a shiny of it has hatched (the Petdex "shiny found" mark)
     strayTimer: 30,
+    socialClock: 0, // seconds since the last friendship update (social.js)
     starving: false,
     settings: { autoAssign: true, sfx: true, music: true },
     stats: { ...NEW_STATS },
@@ -73,6 +75,7 @@ export function loadGame(storage = globalThis.localStorage, now = Date.now()) {
   state.stats = { ...NEW_STATS, ...state.stats };
   if (shiniesBefore == null) state.stats.shinies = (state.pets || []).filter((p) => p.shiny).length;
   if (!Array.isArray(state.meadow)) state.meadow = [];
+  state.socialClock = state.socialClock || 0;
   state.quests = { claimed: {}, ...state.quests };
   state.shinyFound = { ...state.shinyFound };
   state.requests = { ...newRequests(), ...(state.requests && typeof state.requests === 'object' ? state.requests : {}) };

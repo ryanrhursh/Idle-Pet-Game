@@ -4,9 +4,9 @@ import { createNewGame, saveGame, loadGame, SAVE_VERSION } from '../src/game/sta
 import {
   build, upgrade, demolish, hatch, tick, simulate, assignHome, assignJob, freeHomeSlots,
   targetHappiness, netRates, workersOf, residentsOf, getBuilding, expandLand, upgradeCost, eggCost, production, workerMul,
-  retirePet, recallPet, createPet, makeShiny,
+  retirePet, recallPet, createPet, makeShiny, happinessFactors,
 } from '../src/game/sim.js';
-import { CONFIG, BUILDINGS, EGGS, SPECIES } from '../src/game/data.js';
+import { CONFIG, BUILDINGS, EGGS, SPECIES, TRAITS } from '../src/game/data.js';
 import {
   QUESTS, ENDLESS, endlessQuest, currentEndless, questSummary, claimable, claimQuest, claimAll, questProgress, upcoming,
 } from '../src/game/quests.js';
@@ -15,6 +15,10 @@ import {
 } from '../src/game/requests.js';
 import { featuredSpecies, featuredEndsAt, featuredChance, WEEK_MS } from '../src/game/featured.js';
 import { fmt, nice } from '../src/game/util.js';
+import {
+  socialStep, chemistry, haveBaby, familyTree, relationshipsOf, companionOf, bondBetween, couples, friendPairs, bestPairs,
+  maxGeneration, related, likesText,
+} from '../src/game/social.js';
 
 // small deterministic RNG
 function seeded(seed = 1) {
@@ -686,4 +690,206 @@ test('hatching a shiny counts towards the endless shiny goals, and requests can 
   const kinds = currentEndless(s).map((q) => q.id);
   assert.ok(kinds.includes('hatched:1') && kinds.includes('shinies:1'));
   assert.equal(endlessQuest('hatched', 1).goal, 60);
+});
+
+// ---------- friendships, partners and families ----------
+
+// A town where the two starter pets (same home) have the given traits.
+function pair(traitA, traitB, speciesA = 'bunny', speciesB = 'beaver') {
+  const s = createNewGame(seeded());
+  const [a, b] = s.pets;
+  a.trait = traitA; b.trait = traitB; a.species = speciesA; b.species = speciesB;
+  a.happiness = b.happiness = 90;
+  return { s, a, b };
+}
+const days = (s, a, n) => { for (let i = 0; i < n; i++) { s.time += 90; socialStep(s, 90, () => 0.99); } };
+
+test('chemistry: liked traits help, clashes hurt, friendly traits and the same species help', () => {
+  const mk = (trait, species = 'bunny') => ({ trait, species });
+  assert.equal(chemistry(mk('hardworking'), mk('quick', 'fox')), 2);
+  assert.equal(chemistry(mk('sleepy'), mk('hardworking', 'fox')), -2);
+  assert.equal(chemistry(mk('nibbler'), mk('quick', 'fox')), 0);
+  assert.equal(chemistry(mk('cheerful'), mk('quick', 'fox')), 1, 'cheerful pets get on with anyone');
+  assert.equal(chemistry(mk('quick'), mk('hardworking')), chemistry(mk('hardworking'), mk('quick')), 'symmetric');
+  assert.equal(chemistry(mk('social'), mk('social')), 3, 'likes, friendliness and species add up to more, but it is capped at 3');
+  assert.ok(likesText('hardworking').likes.includes('Quick Learner'));
+});
+
+test('pets who share a home grow closer on their own, up to what their chemistry allows', () => {
+  const { s, a, b } = pair('nibbler', 'quick'); // chemistry 0: friends, no more
+  assert.equal(a.homeId, b.homeId);
+  days(s, a, 40);
+  assert.ok(bondBetween(a, b) > 30 && bondBetween(a, b) < 40, `friends only: ${bondBetween(a, b)}`);
+  assert.equal(bondBetween(a, b), bondBetween(b, a), 'bonds are mutual');
+  const good = pair('hardworking', 'quick');
+  days(good.s, good.a, 40);
+  assert.ok(bondBetween(good.a, good.b) >= 75, 'a pair that likes each other reaches partner level');
+  assert.ok(friendPairs(good.s) === 1 && bestPairs(good.s) === 1);
+});
+
+test('the game builds friendships by itself while it runs', () => {
+  const s = createNewGame(seeded(3));
+  s.resources.treats = 100;
+  hatch(s, 'basic', seeded(4));
+  simulate(s, 3000, seeded(5));
+  assert.ok(s.pets.some((p) => Object.keys(p.bonds || {}).length > 0));
+});
+
+test('pets that are apart drift back to 0, but partners and family keep their bond', () => {
+  const { s, a, b } = pair('hardworking', 'quick');
+  a.bonds = { [b.id]: 50 }; b.bonds = { [a.id]: 50 };
+  a.homeId = null; b.homeId = null; a.jobId = null; b.jobId = null;
+  socialStep(s, 100, () => 0.99);
+  assert.equal(bondBetween(a, b), 49);
+  a.partnerId = b.id;
+  socialStep(s, 100, () => 0.99);
+  assert.equal(bondBetween(a, b), 49, 'partners do not drift apart');
+});
+
+test('friends cheer each other up and work faster together; rivals do the opposite', () => {
+  const { s, a, b } = pair('hardworking', 'quick');
+  const base = workerMul(s, a);
+  b.jobId = a.jobId = s.buildings.find((x) => x.type === 'farm').id;
+  a.bonds = { [b.id]: 70 }; b.bonds = { [a.id]: 70 };
+  socialStep(s, 1, () => 0.99);
+  assert.ok(workerMul(s, a) > base * 1.02, 'best friends at the same workplace work faster');
+  assert.ok(happinessFactors(s, a).some(([k, v]) => k.startsWith('Best friends') && v > 0));
+  a.bonds = { [b.id]: -60 }; b.bonds = { [a.id]: -60 };
+  socialStep(s, 1, () => 0.99);
+  assert.ok(workerMul(s, a) < base, 'rivals slow each other down');
+  const labels = happinessFactors(s, a).filter(([, v]) => v < 0).map(([k]) => k);
+  assert.ok(labels.includes('Rival at home') && labels.includes('Rival at work'));
+});
+
+test('sleepy and hard-working housemates end up as rivals', () => {
+  const { s, a, b } = pair('sleepy', 'hardworking');
+  days(s, a, 20);
+  assert.ok(bondBetween(a, b) <= -40);
+  assert.ok(s.log.some((l) => l.msg.includes("can't stand each other")));
+});
+
+test('best friends who are grown up and unrelated become partners; kids and relatives do not', () => {
+  const { s, a, b } = pair('hardworking', 'quick');
+  a.bonds = { [b.id]: 80 }; b.bonds = { [a.id]: 80 };
+  a.kid = true;
+  socialStep(s, 1, () => 0.99);
+  assert.equal(a.partnerId, undefined, 'a kid is too young');
+  a.kid = false; a.parents = [900, 901]; b.parents = [900, 902];
+  assert.ok(related(a, b));
+  socialStep(s, 1, () => 0.99);
+  assert.equal(a.partnerId, undefined, 'siblings do not pair off');
+  b.parents = [];
+  socialStep(s, 1, () => 0.99);
+  assert.equal(a.partnerId, b.id);
+  assert.equal(b.partnerId, a.id);
+  assert.equal(couples(s), 1);
+  assert.ok(s.events.some((e) => e.msg.includes('became partners')));
+});
+
+test('couples have babies: needs a free bed, the cooldown and room; the baby is a kid with a family', () => {
+  const { s, a, b } = pair('hardworking', 'quick');
+  a.partnerId = b.id; b.partnerId = a.id; a.partnerSince = b.partnerSince = 0;
+  a.bonds = { [b.id]: 80 }; b.bonds = { [a.id]: 80 };
+  s.time = 100;
+  socialStep(s, 1, () => 0);
+  assert.equal(s.stats.born, 0, 'too soon after becoming partners');
+  s.time = 1000;
+  assert.equal(freeHomeSlots(s), 0, 'the starter cottage is full');
+  socialStep(s, 1, () => 0);
+  assert.equal(s.stats.born, 0, 'no free bed, no baby');
+  s.resources.wood = 100;
+  build(s, 'hut', 0, 0);
+  socialStep(s, 1, () => 0);
+  assert.equal(s.stats.born, 1);
+  const kid = s.pets[s.pets.length - 1];
+  assert.ok(kid.kid && kid.parents.join() === [a.id, b.id].join() && kid.gen === 2);
+  assert.equal(kid.jobId, null, 'kids do not work');
+  assert.equal(assignJob(s, kid.id, s.buildings.find((x) => x.type === 'farm').id).ok, false);
+  assert.equal(bondBetween(kid, a), 60);
+  assert.ok([a.species, b.species].includes(kid.species));
+  assert.ok(related(kid, a) && !related(a, b));
+  socialStep(s, 1, () => 0);
+  assert.equal(s.stats.born, 1, 'cooldown between babies');
+  assert.ok(s.events.some((e) => e.msg.includes('welcomed a baby')));
+});
+
+test('kids eat half, grow up after a few days and then take a job', () => {
+  const { s, a, b } = pair('hardworking', 'quick');
+  const eatBefore = production(s).eat;
+  const kid = haveBaby(s, a, b, () => 0);
+  const foodPerPet = CONFIG.foodPerPet * (TRAITS[kid.trait].food || 1);
+  assert.ok(Math.abs(production(s).eat - (eatBefore + foodPerPet * 0.5)) < 1e-9);
+  assert.equal(happinessFactors(s, kid).some(([k]) => k === 'Playing'), true);
+  s.time += 100; socialStep(s, 1, () => 0.99);
+  assert.ok(kid.kid, 'still a kid');
+  s.time += 200; socialStep(s, 1, () => 0.99);
+  assert.equal(kid.kid, false);
+  assert.ok(s.events.some((e) => e.msg.includes('grew up')));
+});
+
+test('family trees: generations, children, siblings, and the Meadow does not break them', () => {
+  const { s, a, b } = pair('hardworking', 'quick');
+  a.partnerId = b.id; b.partnerId = a.id;
+  const k1 = haveBaby(s, a, b, () => 0.3);
+  const k2 = haveBaby(s, a, b, () => 0.6);
+  k1.kid = k2.kid = false;
+  const k3 = haveBaby(s, k1, { ...k2, id: 777, parents: [], gen: 1 }, () => 0.5);
+  assert.equal(k1.gen, 2);
+  assert.equal(k3.gen, 3);
+  assert.equal(maxGeneration(s), 3);
+  const rel = relationshipsOf(s, k1);
+  assert.deepEqual(rel.parents.map((e) => e.pet.id).sort(), [a.id, b.id].sort());
+  assert.deepEqual(rel.siblings.map((e) => e.pet.id), [k2.id]);
+  assert.deepEqual(rel.children.map((e) => e.pet.id), [k3.id]);
+  assert.ok(![...rel.best, ...rel.friends].some((e) => [a.id, b.id, k2.id, k3.id].includes(e.pet.id)), 'family is listed once, not again as friends');
+  retirePet(s, a.id);
+  const tree = familyTree(s, k1);
+  assert.equal(tree.parents.length, 2, 'a retired parent still shows in the tree');
+  assert.equal(tree.descendants[0].pet.id, k3.id);
+  assert.equal(companionOf(s, k1).id, b.id, 'with one parent retired, the grown child spends time with the other (a best friend)');
+});
+
+test('companions for the evening: kids pick a parent, then partner, then a friend, only if in town', () => {
+  const { s, a, b } = pair('hardworking', 'quick');
+  assert.equal(companionOf(s, a), null);
+  a.bonds = { [b.id]: 30 }; b.bonds = { [a.id]: 30 };
+  assert.deepEqual(companionOf(s, a), { id: b.id, kind: 'friend' });
+  a.partnerId = b.id;
+  assert.equal(companionOf(s, a).kind, 'partner');
+  retirePet(s, b.id);
+  assert.equal(companionOf(s, a), null, 'the Meadow is out of town');
+});
+
+test('social data survives saving, and old saves without it keep working', () => {
+  const store = memoryStorage();
+  const { s, a, b } = pair('hardworking', 'quick');
+  a.partnerId = b.id; b.partnerId = a.id;
+  haveBaby(s, a, b, () => 0.3);
+  saveGame(s, store);
+  const loaded = loadGame(store, s.savedAt + 1000).state;
+  assert.deepEqual(loaded.pets.map((p) => [p.id, p.bonds, p.partnerId, p.parents, p.kid, p.gen]), s.pets.map((p) => [p.id, p.bonds, p.partnerId, p.parents, p.kid, p.gen]));
+  assert.equal(loaded.stats.born, 1);
+  const raw = JSON.parse(store.getItem(KEY));
+  for (const p of raw.pets) { delete p.bonds; delete p.partnerId; delete p.parents; delete p.kid; delete p.gen; delete p.born; }
+  delete raw.stats.born; delete raw.socialClock;
+  store.setItem(KEY, JSON.stringify(raw));
+  const old = loadGame(store, s.savedAt + 1000).state;
+  assert.equal(old.stats.born, 0);
+  assert.equal(maxGeneration(old), 1);
+  simulate(old, 600, seeded(6));
+  assert.ok(old.pets.every((p) => Number.isFinite(p.happiness)));
+  assert.equal(old.version, SAVE_VERSION);
+});
+
+test('family goals follow the family', () => {
+  const { s, a, b } = pair('hardworking', 'quick');
+  assert.ok(!claimable(s).some((q) => ['friend1', 'best1', 'partner1', 'baby1'].includes(q.id)));
+  a.bonds = { [b.id]: 80 }; b.bonds = { [a.id]: 80 };
+  a.partnerId = b.id; b.partnerId = a.id;
+  haveBaby(s, a, b, () => 0.3);
+  const ready = claimable(s).map((q) => q.id);
+  for (const id of ['friend1', 'best1', 'partner1', 'baby1']) assert.ok(ready.includes(id), id);
+  s.quests.claimed.baby1 = true;
+  assert.ok(currentEndless(s).some((q) => q.id === 'born:1'));
+  assert.equal(endlessQuest('gens', 1).goal, 7);
 });

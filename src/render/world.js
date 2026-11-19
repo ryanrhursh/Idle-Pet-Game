@@ -2,8 +2,9 @@
 // home and work, floating production pop-ups, and tap picking.
 
 import * as THREE from 'three';
-import { BUILDINGS, CONFIG, RARITIES, SPECIES, RESOURCES } from '../game/data.js';
-import { getBuilding, workersOf } from '../game/sim.js';
+import { BUILDINGS, CONFIG, RARITIES, SOCIAL, SPECIES, RESOURCES } from '../game/data.js';
+import { getBuilding, socialCache, workersOf } from '../game/sim.js';
+import { companionOf } from '../game/social.js';
 import { buildBuilding, buildPet, buildScenicTree, mat, windowMat } from './models.js';
 import { daylight } from './stage.js';
 
@@ -93,6 +94,8 @@ export class World {
     this.zzzTex = textTexture('z z', '#cfd8ff');
     this.resTex = {};
     for (const k of Object.keys(RESOURCES)) this.resTex[k] = emojiTexture(RESOURCES[k].emoji);
+    // little icons that float up over pets: friends 💛, partners 💕, family 🧡, rivals 💢, newborns 👶
+    this.iconTex = { love: emojiTexture('💕'), friend: emojiTexture('💛'), family: emojiTexture('🧡'), rival: emojiTexture('💢'), baby: emojiTexture('👶') };
     this.hitGeo = new THREE.SphereGeometry(0.28, 6, 4);
     this.hitMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
     this.puffGeo = new THREE.SphereGeometry(0.06, 6, 4);
@@ -168,7 +171,9 @@ export class World {
     const petSeen = new Set();
     for (const pet of state.pets) {
       petSeen.add(pet.id);
-      if (!this.petObjs.has(pet.id)) this.addPet(state, pet);
+      const have = this.petObjs.get(pet.id);
+      if (!have) this.addPet(state, pet);
+      else this.applyKid(have, pet);
     }
     for (const [id, v] of this.petObjs) {
       if (!petSeen.has(id)) { this.root.remove(v.obj); this.petObjs.delete(id); }
@@ -202,15 +207,54 @@ export class World {
       pos: new THREE.Vector3(), target: new THREE.Vector3(), moving: false,
       wanderTimer: 0, wanderSpot: null, sleepSpot: null, mode: 'idle', placed: false,
     };
+    v.baseScale = obj.scale.x; // species size; kids are drawn smaller
+    v.kidScale = 1;
+    v.newborn = !!pet.kid && state.time - (pet.born || 0) < 20;
+    this.applyKid(v, pet);
     this.petObjs.set(pet.id, v);
     return v;
+  }
+
+  // Kids are small, and grow to full size when they grow up.
+  applyKid(v, pet) {
+    const k = pet.kid ? SOCIAL.kidScale : 1;
+    if (v.kidScale === k) return;
+    v.kidScale = k;
+    v.obj.scale.setScalar(v.baseScale * k);
+  }
+
+  spawnIcon(kind, x, z, y = 0.5) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.iconTex[kind], transparent: true, depthWrite: false }));
+    s.position.set(x, y, z);
+    s.scale.setScalar(0.34);
+    s.userData.life = 0;
+    this.root.add(s);
+    this.popups.push(s);
+  }
+
+  // Where a pet with someone to see spends the evening: friends, partners and families meet on the same tile.
+  hangoutSpot(state, pet, v, dt) {
+    v.compTimer = (v.compTimer ?? 0) - dt;
+    if (v.compTimer <= 0) { v.comp = companionOf(state, pet); v.compTimer = 2 + Math.random(); }
+    const c = v.comp;
+    if (!c) return null;
+    let a = pet.id, b = c.id;
+    if (c.kind === 'family') {
+      // a kid joins its parent's gathering
+      const parent = state.pets.find((x) => x.id === c.id);
+      const pc = parent && companionOf(state, parent);
+      if (pc) { a = parent.id; b = pc.id; }
+    }
+    const h = (Math.imul(Math.min(a, b), 73856093) ^ Math.imul(Math.max(a, b), 19349663)) >>> 0;
+    const p = tileToWorld(h % COLS, (h >>> 8) % state.rows);
+    return new THREE.Vector3(p.x + (((pet.id * 37) % 7) - 3) * 0.06, 0, p.z + 0.4 + (((pet.id * 17) % 5) - 2) * 0.04);
   }
 
   // ---------- per-frame animation ----------
 
   // Where should this pet be right now? Returns { pos, mode } with mode in
   // work | wander | home | sleep.
-  petGoal(state, pet, v, isWork, dt) {
+  petGoal(state, pet, v, isWork, dt, isDusk = false) {
     const rng = Math.random;
     if (isWork && pet.jobId != null) {
       const b = getBuilding(state, pet.jobId);
@@ -221,6 +265,11 @@ export class World {
         const p = tileToWorld(b.x, b.y);
         return { pos: new THREE.Vector3(p.x + Math.cos(a) * 0.42, 0, p.z + Math.sin(a) * 0.42), mode: 'work' };
       }
+    }
+    if (isDusk) {
+      // social hour before bed: pets with a friend, partner or family meet up
+      const spot = this.hangoutSpot(state, pet, v, dt);
+      if (spot) return { pos: spot, mode: 'wander' };
     }
     if (!isWork && pet.homeId != null) {
       const b = getBuilding(state, pet.homeId);
@@ -250,6 +299,7 @@ export class World {
   update(state, dt, t) {
     const phase = (state.time % CONFIG.dayLength) / CONFIG.dayLength;
     const isWork = phase >= CONFIG.workStart && phase < CONFIG.workEnd;
+    const isDusk = phase >= CONFIG.workEnd && phase < CONFIG.workEnd + 0.12;
     const night = 1 - daylight(phase);
     windowMat.emissiveIntensity = night * 1.2;
 
@@ -266,10 +316,11 @@ export class World {
     for (const pet of state.pets) {
       const v = this.petObjs.get(pet.id);
       if (!v) continue;
-      const goal = this.petGoal(state, pet, v, isWork, dt);
+      const goal = this.petGoal(state, pet, v, isWork, dt, isDusk);
       if (!v.placed) {
         v.pos.copy(goal.pos);
         v.placed = true;
+        if (v.newborn) { v.newborn = false; this.spawnIcon('baby', v.pos.x, v.pos.z, 0.5); }
       }
       const to = goal.pos.clone().sub(v.pos);
       const dist = to.length();
@@ -312,6 +363,14 @@ export class World {
             parts.headG.rotation.x = Math.sin(t * 6 + v.seed) * 0.15;
           } else {
             parts.headG.rotation.y = Math.sin(t * 0.8 + v.seed) * 0.5;
+            if (isDusk && v.comp) {
+              // together: a heart now and then
+              v.iconTimer = (v.iconTimer ?? Math.random() * 2) - dt;
+              if (v.iconTimer <= 0) {
+                v.iconTimer = 2.5 + Math.random() * 2;
+                this.spawnIcon(v.comp.kind === 'partner' ? 'love' : v.comp.kind === 'family' ? 'family' : 'friend', v.pos.x, v.pos.z, 0.5);
+              }
+            }
           }
         }
       }
@@ -353,6 +412,13 @@ export class World {
         this.root.add(s);
         this.popups.push(s);
         if (b.type === 'bakery' || b.type === 'candy') this.spawnPuff(b);
+        // co-workers: a 💢 over a worker with a rival here, or sometimes a 💛 over one working with a friend
+        const ws = workersOf(state, b.id);
+        const rival = ws.find((p) => (socialCache.get(p) || {}).rivalsWork > 0);
+        const buddy = ws.find((p) => (socialCache.get(p) || {}).friendsWork > 0);
+        const who = rival || (Math.random() < 0.5 ? buddy : null);
+        const wv = who && this.petObjs.get(who.id);
+        if (wv) this.spawnIcon(rival ? 'rival' : 'friend', wv.pos.x, wv.pos.z, 0.55);
       }
       this.popupTimers.set(b.id, timer);
     }

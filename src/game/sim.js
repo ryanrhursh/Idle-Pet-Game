@@ -6,6 +6,10 @@ import {
 } from './data.js';
 import { featuredSpecies } from './featured.js';
 
+// Other modules plug in here: social.js adds a per-tick hook and stores each pet's computed social effects.
+export const tickHooks = [];
+export const socialCache = new WeakMap(); // pet object -> { workMul, mood: [[label, value], ...] }
+
 // ---------- helpers ----------
 
 export function pickWeighted(weights, rng = Math.random) {
@@ -124,6 +128,7 @@ export function createPet(state, speciesId, rng = Math.random) {
     homeId: null,
     jobId: null,
     joined: state.time,
+    bonds: {}, // other pet id -> -100..100 (see social.js)
   };
   state.pets.push(pet);
   const isNew = !state.discovered[speciesId];
@@ -224,6 +229,7 @@ export function assignJob(state, petId, bId) {
   const pet = getPet(state, petId);
   if (!pet) return { ok: false, msg: 'No such pet.' };
   if (bId == null) { pet.jobId = null; return { ok: true }; }
+  if (pet.kid) return { ok: false, msg: `${pet.name} is too young to work.` };
   const b = getBuilding(state, bId);
   if (!b || BUILDINGS[b.type].type !== 'job') return { ok: false, msg: 'That is not a workplace.' };
   if (pet.jobId === bId) return { ok: true };
@@ -240,12 +246,22 @@ function openJobs(state) {
   return state.buildings.filter((b) => workersOf(state, b.id).length < jobSlots(b));
 }
 
+// A home where the pet's partner or parent already lives, if it has room.
+function familyHome(state, pet) {
+  for (const id of [pet.partnerId, ...(pet.parents || [])]) {
+    const other = id != null ? getPet(state, id) : null;
+    const b = other && other.homeId != null ? getBuilding(state, other.homeId) : null;
+    if (b && residentsOf(state, b.id).length < homeCapacity(b)) return b;
+  }
+  return null;
+}
+
 export function autoAssignPet(state, pet) {
   if (pet.homeId == null) {
-    const home = openHomes(state)[0];
+    const home = familyHome(state, pet) || openHomes(state)[0];
     if (home) pet.homeId = home.id;
   }
-  if (pet.jobId == null) {
+  if (pet.jobId == null && !pet.kid) {
     const jobs = openJobs(state);
     const fav = jobs.find((b) => b.type === SPECIES[pet.species].favJob);
     const job = fav || jobs[0];
@@ -260,10 +276,10 @@ export function autoAssignAll(state) {
   // pass 1: favourite jobs only
   for (const pet of order) {
     if (pet.homeId == null) {
-      const home = openHomes(state)[0];
+      const home = familyHome(state, pet) || openHomes(state)[0];
       if (home) pet.homeId = home.id;
     }
-    if (pet.jobId == null) {
+    if (pet.jobId == null && !pet.kid) {
       const fav = openJobs(state).find((b) => b.type === SPECIES[pet.species].favJob);
       if (fav) pet.jobId = fav.id;
     }
@@ -354,7 +370,10 @@ export function happinessFactors(state, pet) {
   if (job) {
     if (job.type === SPECIES[pet.species].favJob) f.push(['Dream job', 15]);
     else f.push(['Employed', 5]);
-  } else f.push(['Bored (no job)', -5]);
+  } else if (pet.kid) f.push(['Playing', 5]);
+  else f.push(['Bored (no job)', -5]);
+  const social = socialCache.get(pet);
+  if (social) for (const [label, v] of social.mood) f.push([label, v]);
   const decor = decorHappiness(state);
   if (decor) f.push(['Town decor', decor]);
   if (state.starving) f.push(['Hungry!', -35]);
@@ -378,6 +397,8 @@ export function workerMul(state, pet) {
   m *= 0.5 + pet.happiness / 100; // 0.5x when miserable .. 1.5x when ecstatic
   m *= trait.output || 1;
   if (pet.shiny) m *= 1 + CONFIG.shinyBonus;
+  const social = socialCache.get(pet);
+  if (social) m *= social.workMul; // friends at work help, rivals get in the way
   if (trait.social) {
     const coworkers = workersOf(state, job.id).length - 1;
     m *= 1 + Math.min(3, coworkers) * trait.social;
@@ -407,7 +428,7 @@ export function production(state) {
     if (def.consumes) for (const [res, rate] of Object.entries(def.consumes)) convCons[res] += rate * m;
   }
   let eat = 0;
-  for (const pet of state.pets) eat += CONFIG.foodPerPet * (TRAITS[pet.trait].food || 1);
+  for (const pet of state.pets) eat += CONFIG.foodPerPet * (TRAITS[pet.trait].food || 1) * (pet.kid ? 0.5 : 1);
   return { prod, convProd, convCons, eat };
 }
 
@@ -487,6 +508,8 @@ export function tick(state, dt, rng = Math.random) {
       state.strayTimer = (CONFIG.strayMin + rng() * (CONFIG.strayMax - CONFIG.strayMin)) * (1 + state.pets.length / CONFIG.strayCrowding);
     }
   }
+
+  for (const hook of tickHooks) hook(state, dt, rng);
 }
 
 // Run many ticks (offline progress). Returns resource deltas and pet count change.

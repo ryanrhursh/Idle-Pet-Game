@@ -243,7 +243,9 @@ test('crowded towns attract strays more slowly', () => {
 
 test('goals start unfinished, then complete and pay out exactly once', () => {
   const s = createNewGame(seeded());
-  assert.equal(claimable(s).length, 0);
+  assert.equal(claimable(s).length, 0, 'a brand-new town has nothing to claim yet');
+  simulate(s, 120, seeded(5)); // moods settle
+  assert.equal(claimable(s).length, 0, 'still nothing after the starter pets settle in');
   assert.equal(upcoming(s, 1)[0].id, 'market');
   s.resources.wood = 100;
   build(s, 'market', 0, 0);
@@ -293,4 +295,16 @@ test('old saves without goals or egg stats still load, and get credit for past p
   assert.deepEqual(state.quests, { claimed: {} });
   const ready = claimable(state).map((q) => q.id);
   assert.ok(ready.includes('earn1k') && ready.includes('hatch1'));
+});
+
+test('sound settings default to on, also for older saves', () => {
+  assert.equal(createNewGame(seeded()).settings.sfx, true);
+  const store = memoryStorage();
+  const s = createNewGame(seeded());
+  saveGame(s, store);
+  const raw = JSON.parse(store.getItem('pawville-save-v1'));
+  raw.settings = { autoAssign: false }; // v0.1 shape
+  store.setItem('pawville-save-v1', JSON.stringify(raw));
+  const { state } = loadGame(store, s.savedAt + 1000);
+  assert.deepEqual(state.settings, { autoAssign: false, sfx: true, music: true });
 });

@@ -303,3 +303,6 @@ h3 small.hint { font-weight: 600; margin-left: 4px; }
 .featured small { display: block; color: var(--muted); font-size: 12px; }
 .featured small.kicker { color: #b8860b; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
 .featured small.left { color: var(--ink); font-weight: 700; margin-top: 2px; }
+
+.pet-row.static { cursor: default; }
+.pet-row.static:hover { background: none; }

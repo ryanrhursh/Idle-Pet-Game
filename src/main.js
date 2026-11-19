@@ -3,7 +3,7 @@ import { BUILDINGS, CONFIG, SPECIES } from './game/data.js';
 import { loadGame, saveGame, resetGame } from './game/state.js';
 import {
   assignHome, assignJob, autoAssignAll, build, buildingAt, demolish, expandLand, getBuilding,
-  getPet, hatch, simulate, tick, upgrade,
+  getPet, hatch, recallPet, retirePet, simulate, tick, upgrade,
 } from './game/sim.js';
 import { setActive, setAudioSettings, setNight, sfx, unlock } from './audio.js';
 import { Stage, daylight } from './render/stage.js';
@@ -111,6 +111,24 @@ const actions = {
   findPet: ({ id }) => {
     world.selectedPetId = +id;
     world.focusPet(+id);
+  },
+  retire: ({ id }) => {
+    const p = getPet(state, +id);
+    if (!p) return;
+    ui.confirm(`<h2>Send ${p.name} to the Meadow?</h2><p>${p.name} leaves town and frees a spot. They keep their level${p.shiny ? ' and shine' : ''}, the Petdex remembers them, and you can bring them back later while there's room.</p>`, 'confirmRetire', { id });
+  },
+  confirmRetire: ({ id }) => {
+    ui.closeModal();
+    const r = result(retirePet(state, +id));
+    if (!r.ok) return;
+    sfx('chime');
+    world.selectedPetId = null;
+    ui.petFilter = 'all';
+    ui.open('pets');
+  },
+  recall: ({ id }) => {
+    const r = result(recallPet(state, +id));
+    if (r.ok) sfx('good');
   },
   rename: ({ id }) => {
     const p = getPet(state, +id);

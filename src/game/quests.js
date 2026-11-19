@@ -79,6 +79,7 @@ const LIST = [
   ['legend', '🐲', 'Legend has it…', 'Have both a Dragon and a Lion living in town.', 2, legendaries, { golden: 5 }],
   ['dex19', '🏆', 'Gotta find them all', 'Discover all 19 species.', 19, found, { coins: 250000, golden: 5 }],
   ['shiny3', '💫', 'Shiny collector', 'Find 3 different shiny species.', 3, shinySpecies, { coins: 300000, golden: 5 }],
+  ['shiny5', '🌠', 'Shiny hunter', 'Find 5 different shiny species. Retire pets to the Meadow to make room for more eggs.', 5, shinySpecies, { coins: 600000, golden: 6 }],
   // ---- chapter 6: the long game ----
   ['pets100', '🌇', 'Packed to the rafters', `Have ${CONFIG.maxPets} citizens (the town limit).`, CONFIG.maxPets, pets, { coins: 500000, wood: 300000, golden: 5 }],
   ['upgrade10', '👑', 'Pinnacle', 'Upgrade any building to level 10 (max).', 10, topBuildingLevel, { coins: 400000, wood: 250000, golden: 5 }],
@@ -128,6 +129,20 @@ export const ENDLESS = [
     goal: (t) => grow(500, 3, t),
     desc: (g) => `Make ${fmt(g)} treats in total.`,
     reward: (t, g) => ({ treats: nice(g * 0.2), golden: eggs(1, 8)(t) }),
+  },
+  {
+    kind: 'hatched', icon: '🐣', after: 'hatch30', progress: (s) => s.stats.hatched,
+    names: ['Egg factory', 'Hatchery boss', 'Nest empire', 'Eggs everywhere'],
+    goal: (t) => grow(60, 1.5, t),
+    desc: (g) => `Hatch ${fmt(g)} eggs in total. Each egg costs more, and the Meadow frees room for the pets.`,
+    reward: (t, g) => ({ coins: nice(g * 300), food: nice(g * 150), golden: eggs(1, 8)(t) }),
+  },
+  {
+    kind: 'shinies', icon: '🌟', after: 'shiny3', progress: (s) => s.stats.shinies || 0,
+    names: ['Glitter rush', 'Sparkle storm', 'Shiny shower', 'Starlight stable'],
+    goal: (t) => grow(4, 1.7, t),
+    desc: (g) => `Hatch ${fmt(g)} shiny pets in total (they can be the same species).`,
+    reward: (t, g) => ({ coins: nice(g * 20000), treats: nice(g * 50), golden: eggs(2, 8)(t) }),
   },
   {
     kind: 'requests', icon: '📮', after: 'pets8', progress: (s) => (s.requests ? s.requests.done : 0),

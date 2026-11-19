@@ -23,6 +23,8 @@ const GIVE_WEIGHTS = { coins: 3, wood: 3, food: 2 };
 
 // ---------- generation ----------
 
+// The pet a request names (it may have retired to the Meadow since).
+const findPet = (state, id) => getPet(state, id) || (state.meadow || []).find((p) => p.id === id);
 const stock = (state, res) => state.resources[res] || 0;
 const rate = (rates, res) => Math.max(0, rates[res] || 0);
 // The most of `res` the town could have in 20 minutes.
@@ -170,14 +172,14 @@ export function requestStatus(state, req) {
 }
 
 export function requestIcon(state, req) {
-  if (req.type === 'give') { const p = getPet(state, req.petId); return p ? SPECIES[p.species].emoji : '🐾'; }
+  if (req.type === 'give') { const p = findPet(state, req.petId); return p ? SPECIES[p.species].emoji : '🐾'; }
   if (req.type === 'build') return BUILDINGS[req.b].emoji;
   return req.type === 'hatch' ? '🥚' : '🗺️';
 }
 
 export function requestText(state, req) {
   if (req.type === 'give') {
-    const p = getPet(state, req.petId);
+    const p = findPet(state, req.petId);
     return `${p ? p.name : 'A neighbour'} wants ${fmt(req.amount)} ${RESOURCES[req.res].emoji}`;
   }
   if (req.type === 'build') {

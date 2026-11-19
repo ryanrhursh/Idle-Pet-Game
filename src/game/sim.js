@@ -168,12 +168,42 @@ export function hatch(state, eggId, rng = Math.random, free = false, now = Date.
   const { pet, isNew } = createPet(state, randomSpecies(rarity, rng, featuredSpecies(now)), rng);
   const shiny = rng() < (egg.shinyChance ?? CONFIG.shinyChance);
   const isNewShiny = shiny ? makeShiny(state, pet) : false;
+  if (shiny) state.stats.shinies = (state.stats.shinies || 0) + 1;
   if (!free) state.stats.hatched++;
   if (state.settings.autoAssign) autoAssignPet(state, pet);
   const sp = SPECIES[pet.species];
   const shinyText = shiny ? 'shiny ' : '';
   emit(state, `${shiny ? '✨ ' : ''}${sp.emoji} ${pet.name} the ${shinyText}${RARITIES[rarity].name} ${sp.name} hatched!${isNew ? ' (New species!)' : ''}${isNewShiny ? ' (New shiny!)' : ''}`, rarity === 'common' && !shiny ? 'good' : 'great');
   return { ok: true, pet, isNew, shiny, isNewShiny };
+}
+
+// ---------- the Meadow ----------
+// A pet can retire to the Meadow: it leaves town (freeing a slot under the 100-citizen limit) but keeps its
+// level, name and shininess, and the Petdex keeps the species. It can come back whenever the town has room.
+
+export function retirePet(state, petId) {
+  const pet = getPet(state, petId);
+  if (!pet) return { ok: false, msg: 'No such pet.' };
+  pet.homeId = null;
+  pet.jobId = null;
+  state.pets = state.pets.filter((p) => p.id !== petId);
+  state.meadow = state.meadow || [];
+  state.meadow.push(pet);
+  if (state.settings.autoAssign) autoAssignAll(state);
+  emit(state, `🌼 ${petLabel(pet)} moved to the Meadow.`);
+  return { ok: true, pet };
+}
+
+export function recallPet(state, petId) {
+  const meadow = state.meadow || [];
+  const pet = meadow.find((p) => p.id === petId);
+  if (!pet) return { ok: false, msg: 'That pet is not in the Meadow.' };
+  if (state.pets.length >= CONFIG.maxPets) return { ok: false, msg: `The town is full (${CONFIG.maxPets} citizens). Send someone to the Meadow first.` };
+  state.meadow = meadow.filter((p) => p.id !== petId);
+  state.pets.push(pet);
+  if (state.settings.autoAssign) autoAssignPet(state, pet);
+  emit(state, `🏡 ${petLabel(pet)} came back from the Meadow.`, 'good');
+  return { ok: true, pet };
 }
 
 // ---------- assignment ----------

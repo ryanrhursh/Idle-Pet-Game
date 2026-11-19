@@ -250,6 +250,23 @@ export class UI {
     const homeless = s.pets.filter((p) => p.homeId == null).length;
     const jobless = s.pets.filter((p) => p.jobId == null).length;
     const f = this.petFilter;
+    const meadow = s.meadow || [];
+    const chips = `<button class="chip ${f === 'meadow' ? 'on' : ''}" data-act="petFilter" data-f="meadow">🌼 Meadow ${meadow.length}</button>`;
+    if (f === 'meadow') {
+      const full = s.pets.length >= CONFIG.maxPets;
+      let body = `<div class="row"><button class="chip" data-act="petFilter" data-f="all">← Town ${s.pets.length}/${CONFIG.maxPets}</button>${chips}</div>
+        <p class="hint">🌼 Pets in the Meadow live happily out of town. They keep their level and shininess, and the Petdex remembers them. Bring one back whenever the town has room.</p>`;
+      if (full && meadow.length) body += `<p class="warn">The town is full. Send someone to the Meadow first.</p>`;
+      body += [...meadow].reverse().map((p) => {
+        const sp = SPECIES[p.species];
+        return `<div class="pet-row static">
+          <img src="${this.petImg(p.species, p.shiny)}" alt="">
+          <div class="grow"><b>${p.shiny ? '✨ ' : ''}${esc(p.name)}</b> <small style="color:${RARITIES[sp.rarity].color}">${sp.name} · Lv ${p.level}</small></div>
+          <button class="btn small" data-act="recall" data-id="${p.id}" ${full ? 'disabled' : ''}>Bring back</button>
+        </div>`;
+      }).join('') || '<p class="hint">Nobody is in the Meadow yet. Open a pet and tap "Send to the Meadow" to make room in town.</p>';
+      return { title: '🌼 Meadow', body };
+    }
     let pets = [...s.pets];
     if (f === 'homeless') pets = pets.filter((p) => p.homeId == null);
     if (f === 'jobless') pets = pets.filter((p) => p.jobId == null);
@@ -258,6 +275,7 @@ export class UI {
       <button class="chip ${f === 'all' ? 'on' : ''}" data-act="petFilter" data-f="all">All ${s.pets.length}</button>
       <button class="chip ${f === 'homeless' ? 'on' : ''}" data-act="petFilter" data-f="homeless">🏚️ Homeless ${homeless}</button>
       <button class="chip ${f === 'jobless' ? 'on' : ''}" data-act="petFilter" data-f="jobless">💤 Jobless ${jobless}</button>
+      ${chips}
     </div>
     <p class="hint">🛏️ ${s.pets.filter((p) => p.homeId != null).length}/${totalHousing(s)} beds used. Free beds attract strays.</p>
     <div class="row"><button class="btn primary" data-act="autoAssign">✨ Auto-assign homes & jobs</button></div>`;
@@ -307,6 +325,7 @@ export class UI {
       <div class="row">
         <button class="btn" data-act="rename" data-id="${p.id}">✏️ Rename</button>
         <button class="btn" data-act="findPet" data-id="${p.id}">📍 Find in town</button>
+        <button class="btn" data-act="retire" data-id="${p.id}">🌼 Send to the Meadow</button>
         <button class="btn" data-act="tab" data-tab="pets">← All pets</button>
       </div>`;
     return { title: esc(p.name), body };
@@ -344,7 +363,7 @@ export class UI {
     }
     body += `</div>`;
     const free = totalHousing(s) - s.pets.filter((p) => p.homeId != null).length;
-    if (s.pets.length >= CONFIG.maxPets) body += `<p class="warn">🏙️ The town is full (${CONFIG.maxPets} citizens).</p>`;
+    if (s.pets.length >= CONFIG.maxPets) body += `<p class="warn">🏙️ The town is full (${CONFIG.maxPets} citizens). Send pets to the 🌼 Meadow (Pets tab) to make room.</p>`;
     else if (free <= 0) body += `<p class="warn">⚠️ No free beds. New pets will be homeless until you build more homes.</p>`;
     return { title: '🥚 Hatchery', body };
   }
@@ -402,8 +421,9 @@ export class UI {
       for (const [id, sp] of Object.entries(SPECIES)) {
         if (sp.rarity !== r) continue;
         const owned = s.pets.filter((p) => p.species === id).length;
+        const inMeadow = (s.meadow || []).filter((p) => p.species === id).length;
         body += s.discovered[id]
-          ? `<div class="dex-cell" style="--rc:${RARITIES[r].color}"><div class="dex-imgs"><img src="${this.petImg(id)}" alt="">${s.shinyFound && s.shinyFound[id] ? `<img class="mini" src="${this.petImg(id, true)}" alt="shiny">` : ''}</div><b>${sp.name}</b><small>${owned ? `×${owned}` : 'moved away'}</small><small class="sh">${s.shinyFound && s.shinyFound[id] ? '✨ shiny found' : '✨ ?'}</small></div>`
+          ? `<div class="dex-cell" style="--rc:${RARITIES[r].color}"><div class="dex-imgs"><img src="${this.petImg(id)}" alt="">${s.shinyFound && s.shinyFound[id] ? `<img class="mini" src="${this.petImg(id, true)}" alt="shiny">` : ''}</div><b>${sp.name}</b><small>${owned ? `×${owned}` : ''}${inMeadow ? `${owned ? ' · ' : ''}🌼${inMeadow}` : owned ? '' : 'moved away'}</small><small class="sh">${s.shinyFound && s.shinyFound[id] ? '✨ shiny found' : '✨ ?'}</small></div>`
           : `<div class="dex-cell unknown" style="--rc:${RARITIES[r].color}"><div class="q">?</div><b>???</b><small>${RARITIES[r].name}</small></div>`;
       }
     }
@@ -422,6 +442,7 @@ export class UI {
         <li>Free beds attract stray pets. Treats 🍬 hatch eggs for rarer pets.</li>
         <li>Check the 🎯 Goals tab for what to do next. Finishing goals pays rewards.</li>
         <li>Neighbours post 📮 <b>Town requests</b> in the Goals tab: hand over what they ask for, or build, hatch or expand, to earn rewards. Swap any you don't like with ↻.</li>
+        <li>Town full? Open a pet and tap <b>Send to the Meadow</b>: it frees a spot, and you can bring the pet back later while there's room.</li>
         <li>About 1 egg in 30 hatches a ✨ <b>shiny</b> pet (+15% output). Each week one species is the ⭐ featured egg in the Hatch tab.</li>
         <li>Spend big on upgrades, more land and one-of-a-kind wonders. They boost the whole town.</li>
         <li>Happy pets work harder: add gardens and fountains.</li>
@@ -433,6 +454,7 @@ export class UI {
         <li><span>Day</span><b>${days}</b></li>
         <li><span>Citizens</span><b>${s.pets.length}</b></li>
         <li><span>Goals done</span><b>${questSummary(s).done}/${QUESTS.length}${questSummary(s).endless ? ` +${questSummary(s).endless}♾️` : ''}</b></li>
+        <li><span>Pets in the Meadow</span><b>${(s.meadow || []).length}</b></li>
         <li><span>Town requests done</span><b>${s.requests.done}</b></li>
         <li><span>Shiny species found</span><b>${Object.keys(s.shinyFound || {}).length}/${Object.keys(SPECIES).length}</b></li>
         <li><span>Eggs hatched</span><b>${s.stats.hatched}</b></li>

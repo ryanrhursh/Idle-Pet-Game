@@ -12,19 +12,19 @@ Claude Code loads this file into every new session. **Keep it current:** at the 
 3D idle city-builder: the pets you collect are the citizens. Each pet needs a home, a job and food.
 - **Live:** https://ryanrhursh.github.io/Idle-Pet-Game/. `.github/workflows/deploy.yml` tests, builds and deploys on every push to `main`.
 - **Stack:** Vite 7 + Three.js (no framework), plain JS ES modules, installable PWA (offline via `public/sw.js`). Node 20.19+.
-- **Commands:** `npm run dev` · `npm test` (node:test, 42 tests) · `node scripts/balance-bot.mjs 10 100 400` (economy check) · `npm run build`
+- **Commands:** `npm run dev` · `npm test` (node:test, 46 tests) · `node scripts/balance-bot.mjs 10 100 400` (economy check) · `npm run build`
 - **Players:** Windows, Mac, iOS, Android, all through the browser/PWA. Later this can be wrapped with Capacitor (app stores) or Tauri (desktop).
 
 ## Code map
 | File | What's in it |
 | --- | --- |
 | `src/game/data.js` | All balance numbers: species (19), rarities, traits, buildings, eggs, `CONFIG` (incl. shiny chance/bonus, featured boost) |
-| `src/game/sim.js` | Pure rules: build/upgrade/demolish, assign home/job, happiness, `production()`, `tick()`, `simulate()`, `eggCost()`, wonder bonuses, `hatch()` (shiny roll + featured species) |
-| `src/game/quests.js` | The 50 hand-written goals (`QUESTS`) plus endless goals (`ENDLESS`: coins, wood, food, treats, requests, days; tier n target/reward by formula, ids like `coins:3`), `claimQuest`/`claimAll`/`payReward`. Progress is derived from state; only `state.quests.claimed` is saved |
+| `src/game/sim.js` | Pure rules: build/upgrade/demolish, assign home/job, happiness, `production()`, `tick()`, `simulate()`, `eggCost()`, wonder bonuses, `hatch()` (shiny roll + featured species), `retirePet`/`recallPet` (the Meadow) |
+| `src/game/quests.js` | The 51 hand-written goals (`QUESTS`) plus endless goals (`ENDLESS`: coins, wood, food, treats, hatched, shinies, requests, days; tier n target/reward by formula, ids like `coins:3`), `claimQuest`/`claimAll`/`payReward`. Progress is derived from state; only `state.quests.claimed` is saved |
 | `src/game/requests.js` | Town Requests: 3 open at a time (give / build / hatch / land), generated from the town's income and stock with a saved seed. `state.requests = {seed, next, done, active}`. `ensureRequests` refills; `completeRequest`, `skipRequest` |
 | `src/game/featured.js` | Weekly featured egg: species chosen from the UTC date (no server), `featuredChance()` for the UI |
 | `src/game/util.js` | `fmt` (big numbers), `nice` (2-digit rounding), `mulberry32` (seedable RNG) |
-| `src/game/state.js` | `createNewGame`, save/load (localStorage key `pawville-save-v1`, `SAVE_VERSION`), offline progress |
+| `src/game/state.js` | `createNewGame` (also `meadow: []`, retired pet records), save/load (localStorage key `pawville-save-v1`, `SAVE_VERSION`), offline progress |
 | `src/render/stage.js` | Renderer, camera + OrbitControls (touch: 1-finger pan, 2-finger zoom/rotate), lights, day/night, view inset for panels |
 | `src/render/models.js` | Procedural low-poly buildings (`BUILDERS`) and pets (`LOOKS` per species), `portrait()` renders UI thumbnails |
 | `src/render/world.js` | Syncs state to the 3D scene, pet commuting (work by day, home at night), popups/smoke, tap picking |
@@ -52,10 +52,10 @@ Claude Code loads this file into every new session. **Keep it current:** at the 
 - Known design choices you may want to revisit: production keeps running at night while pets sleep; a new game has no coin income until a Market is built (the first goal says so). Late game still plateaus once everything is maxed (see "Next up").
 
 - v0.4: **Endless goals** (after each chapter's hand-written goal, a formula keeps making tiers: coins x4 per tier, wood x4, food x4, treats x3, requests x2.5, days x1.5; shown as ♾️ in Goals and the pill; hand-written goals come first, endless ones closest to done follow). **Town Requests** (Goals tab, 3 open, give/build/hatch/land, sized to 2-5 min of income or 30% of stock and never beyond ~20 min of income; rewards are measured in minutes of income so they stay in proportion; ↻ swaps one). Balance bot A/B: requests speed up the first ~30 days about 1.5x (the bot serves every request instantly), converge by day 100, and drain the late stockpile (day 300: 1.4M coins vs 22M without). **Shiny pets** (3%, Golden Egg 5%; tinted in 3D/portraits, ✨ in lists, +15% output, Petdex "shiny found" via `state.shinyFound`; goals shiny1/2/3). **Weekly featured egg** (Hatch tab, ×8 inside its rarity; legendary weeks only help Golden/Nest Eggs). Old saves migrate in `loadGame` (no version bump). Not checked on the owner's phone: how the Goals tab feels with the 1s refresh (taps now wait while a finger is down).
-- **Caps limit endless content:** 100 citizens, no way to release pets, 19 species, 16 rows, building level 10. So endless goals use unbounded counters only, and a full shiny Petdex (19) is out of reach (about 2-4 shinies per 100 pets).
+- v0.5: **Meadow.** A pet's page has "Send to the Meadow" (confirm dialog): the pet leaves town, freeing a slot under the 100-citizen limit, but keeps level/name/shininess in `state.meadow` and the Petdex keeps the species. Pets tab has a 🌼 Meadow filter listing them with "Bring back" (only while the town has room). Petdex cells show 🌼 counts. Because slots can now be freed, eggs hatched and shinies hatched became endless goal kinds (`hatched` x1.5 from 60, `shinies` x1.7 from 4; `stats.shinies` counts shiny hatches) and goal `shiny5` was added. Old saves get `meadow: []` and a shiny count in `loadGame`. Remaining limiters: egg price +6% per egg hatched, and 19 species / 16 rows / building level 10 (still no endless goals about those).
 
 ## Next up (ideas; the owner picks)
-- **Meadow / retire pets:** let the player send a pet to a Meadow (frees a town slot, keeps the Petdex). That unlocks endless egg/shiny/collection goals and a full shiny Petdex without lifting the 100-pet limit
+- Meadow polish: retire several pets at once (e.g. all jobless commons), show Meadow pets in 3D, Meadow-based goals
 - Owner playtest of requests (are asks too big/small? rewards?), endless goal pacing, shiny odds and the featured-egg boost; tune `requests.js`/`ENDLESS`
 - Seasonal events (no resets, see the design rule)
 - Owner feedback on the sound (volume, which sounds are annoying, music style)
@@ -69,3 +69,4 @@ Claude Code loads this file into every new session. **Keep it current:** at the 
 - **2026-11-18:** Added the Goals system and a balance pass (see Status). Built a balance bot (`scripts/balance-bot.mjs`) to measure the economy. Bumped the SW cache to v4. PR to `main`; the owner merges to deploy.
 - **2026-11-19:** Added sound effects and music (`src/audio.js`), menu toggles, fixed the day-1 "Happy town" goal. SW cache v5. PR to `main`.
 - **2026-11-19 (2):** Added endless goals, Town Requests, shiny pets and the weekly featured egg (see Status). New files `requests.js`, `featured.js`, `util.js`; 42 tests; bot reports requests. SW cache v6. PR to `main`.
+- **2026-11-19 (3):** Added the Meadow (retire/bring back pets), endless `hatched`/`shinies` goals, goal `shiny5`; 46 tests. Built on top of the open v0.4 PR (same branch). 

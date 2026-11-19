@@ -4,6 +4,7 @@ import { createNewGame, saveGame, loadGame, SAVE_VERSION } from '../src/game/sta
 import {
   build, upgrade, demolish, hatch, tick, simulate, assignHome, assignJob, freeHomeSlots,
   targetHappiness, netRates, workersOf, residentsOf, getBuilding, expandLand, upgradeCost, eggCost, production, workerMul,
+  retirePet, recallPet, createPet, makeShiny,
 } from '../src/game/sim.js';
 import { CONFIG, BUILDINGS, EGGS, SPECIES } from '../src/game/data.js';
 import {
@@ -609,4 +610,80 @@ test('the featured species is boosted inside its own rarity, and only where the 
   let hits = 0;
   for (let i = 0; i < 4000; i++) { s.pets.length = 0; if (hatch(s, 'golden', rng, true, rareWeek).pet.species === id) hits++; }
   assert.ok(Math.abs(hits / 4000 - p) < 0.035, `observed ${hits / 4000} vs expected ${p}`);
+});
+
+// ---------- the Meadow ----------
+
+test('retiring a pet frees its home and job and a town slot, and keeps the Petdex', () => {
+  const s = createNewGame(seeded());
+  const pet = s.pets[0];
+  const id = pet.id, species = pet.species;
+  makeShiny(s, pet);
+  const before = production(s).prod.food + production(s).prod.wood;
+  const r = retirePet(s, id);
+  assert.ok(r.ok);
+  assert.ok(!s.pets.some((p) => p.id === id));
+  assert.equal(s.meadow.length, 1);
+  assert.equal(s.meadow[0].homeId, null);
+  assert.equal(s.meadow[0].jobId, null);
+  assert.ok(s.discovered[species], 'the species stays discovered');
+  assert.ok(s.shinyFound[species], 'the shiny entry stays');
+  assert.ok(s.meadow[0].shiny, 'and the pet is still shiny');
+  assert.ok(production(s).prod.food + production(s).prod.wood < before, 'it no longer works');
+  assert.equal(retirePet(s, 99999).ok, false);
+});
+
+test('a full town can retire pets to hatch more, and bring them back only while there is room', () => {
+  const s = rich(createNewGame(seeded()));
+  while (s.pets.length < CONFIG.maxPets) createPet(s, 'mouse', seeded(s.pets.length + 1));
+  assert.equal(hatch(s, 'basic', seeded(2)).ok, false, 'town is full');
+  const id = s.pets[5].id;
+  assert.ok(retirePet(s, id).ok);
+  assert.equal(s.pets.length, CONFIG.maxPets - 1);
+  assert.ok(hatch(s, 'basic', seeded(3)).ok, 'the freed slot can hold a new pet');
+  assert.equal(s.pets.length, CONFIG.maxPets);
+  const blocked = recallPet(s, id);
+  assert.equal(blocked.ok, false);
+  assert.ok(blocked.msg.includes('full'));
+  assert.equal(s.meadow.length, 1, 'still in the Meadow');
+  retirePet(s, s.pets[7].id);
+  assert.ok(recallPet(s, id).ok);
+  assert.equal(s.meadow.length, 1);
+  assert.ok(s.pets.some((p) => p.id === id));
+  assert.equal(recallPet(s, id).ok, false, 'not in the Meadow any more');
+});
+
+test('the Meadow is saved, and old saves without one still load', () => {
+  const store = memoryStorage();
+  const s = createNewGame(seeded());
+  makeShiny(s, s.pets[1]);
+  const keep = s.pets[0].id;
+  retirePet(s, keep);
+  saveGame(s, store);
+  assert.deepEqual(loadGame(store, s.savedAt + 1000).state.meadow, s.meadow);
+  const raw = JSON.parse(store.getItem(KEY));
+  delete raw.meadow;
+  delete raw.stats.shinies; // saves from before shinies were counted
+  store.setItem(KEY, JSON.stringify(raw));
+  const { state } = loadGame(store, s.savedAt + 1000);
+  assert.deepEqual(state.meadow, []);
+  assert.equal(state.stats.shinies, 1, 'shinies already in town are counted');
+  assert.equal(state.version, SAVE_VERSION);
+});
+
+test('hatching a shiny counts towards the endless shiny goals, and requests can name a retired pet', () => {
+  const s = createNewGame(seeded());
+  s.resources.treats = 500;
+  hatch(s, 'basic', () => 0);
+  hatch(s, 'basic', () => 0.999999);
+  assert.equal(s.stats.shinies, 1);
+  const pet = s.pets[0];
+  s.requests.active = [{ id: 50, type: 'give', petId: pet.id, res: 'wood', amount: 20, reward: { treats: 2 } }];
+  retirePet(s, pet.id);
+  assert.ok(requestText(s, s.requests.active[0]).startsWith(pet.name), 'the name still shows');
+  s.quests.claimed.hatch30 = true;
+  s.quests.claimed.shiny3 = true;
+  const kinds = currentEndless(s).map((q) => q.id);
+  assert.ok(kinds.includes('hatched:1') && kinds.includes('shinies:1'));
+  assert.equal(endlessQuest('hatched', 1).goal, 60);
 });

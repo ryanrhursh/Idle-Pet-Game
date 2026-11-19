@@ -7,7 +7,7 @@ import { ensureRequests, newRequests } from './requests.js';
 
 const SAVE_KEY = 'pawville-save-v1';
 export const SAVE_VERSION = 1;
-const NEW_STATS = { hatched: 0, strays: 0, coinsEarned: 0, woodEarned: 0, foodEarned: 0, treatsEarned: 0 };
+const NEW_STATS = { hatched: 0, strays: 0, coinsEarned: 0, woodEarned: 0, foodEarned: 0, treatsEarned: 0, shinies: 0 };
 
 export function createNewGame(rng = Math.random) {
   const state = {
@@ -17,6 +17,7 @@ export function createNewGame(rng = Math.random) {
     rows: CONFIG.startRows,
     buildings: [],
     pets: [],
+    meadow: [], // retired pets (full pet records), see retirePet()
     nextId: 1,
     discovered: {},
     shinyFound: {}, // species -> true once a shiny of it has hatched (the Petdex "shiny found" mark)
@@ -68,7 +69,10 @@ export function loadGame(storage = globalThis.localStorage, now = Date.now()) {
   state.events = [];
   state.settings = { autoAssign: true, sfx: true, music: true, ...state.settings };
   // saves from older versions of the game: fill in anything added since
+  const shiniesBefore = state.stats && state.stats.shinies; // not tracked before the Meadow: count the shinies in town
   state.stats = { ...NEW_STATS, ...state.stats };
+  if (shiniesBefore == null) state.stats.shinies = (state.pets || []).filter((p) => p.shiny).length;
+  if (!Array.isArray(state.meadow)) state.meadow = [];
   state.quests = { claimed: {}, ...state.quests };
   state.shinyFound = { ...state.shinyFound };
   state.requests = { ...newRequests(), ...(state.requests && typeof state.requests === 'object' ? state.requests : {}) };

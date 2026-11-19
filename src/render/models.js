@@ -199,6 +199,53 @@ const BUILDERS = {
       m(sphere(0.06, 8, 6), mat('#8fe3ff', { emissive: '#3aa7d8', emissiveIntensity: 0.4 }), 0, 0.46, 0),
     );
   },
+  // ---- wonders: taller landmarks, one of each ----
+  clocktower() {
+    return group(
+      m(box(0.86, 0.04, 0.86), '#d8d2c4', 0, 0.02, 0, { shadow: false }),
+      m(box(0.46, 0.1, 0.46), '#a8a39a', 0, 0.09, 0),
+      m(box(0.34, 0.62, 0.34), '#c9a27a', 0, 0.45, 0),
+      m(box(0.4, 0.06, 0.4), '#8d6a4a', 0, 0.78, 0),
+      m(cone(0.3, 0.3, 4), '#4a6fa5', 0, 0.96, 0, { ry: Math.PI / 4 }),
+      m(sphere(0.03, 6, 4), '#ffd23f', 0, 1.14, 0),
+      m(cyl(0.11, 0.11, 0.03, 16), '#fffdf2', 0, 0.62, 0.18, { rx: Math.PI / 2 }),
+      m(box(0.015, 0.09, 0.012), '#3b2f4a', 0, 0.65, 0.2),
+      m(box(0.07, 0.015, 0.012), '#3b2f4a', 0.03, 0.62, 0.2),
+      windowPane(0, 0.3, 0.172),
+      door(0.18, 0, '#6b4a2a'),
+    );
+  },
+  academy() {
+    const g = group(
+      m(box(0.86, 0.04, 0.86), '#d8d2c4', 0, 0.02, 0, { shadow: false }),
+      m(box(0.74, 0.07, 0.54), '#bdb7a9', 0, 0.075, 0),
+      m(box(0.62, 0.34, 0.42), '#f3e6c8', 0, 0.28, 0),
+      m(gable(0.72, 0.22, 0.5), '#b5473a', 0, 0.45, 0),
+      m(box(0.16, 0.2, 0.16), '#f3e6c8', 0, 0.62, -0.05),
+      m(cone(0.11, 0.14, 4), '#b5473a', 0, 0.79, -0.05, { ry: Math.PI / 4 }),
+      door(0.215, 0, '#5a3b22'),
+      windowPane(-0.2, 0.3, 0.215),
+      windowPane(0.2, 0.3, 0.215),
+      m(box(0.18, 0.025, 0.14), '#bdb7a9', 0, 0.105, 0.3),
+    );
+    for (const x of [-0.3, -0.1, 0.1, 0.3]) g.add(m(cyl(0.03, 0.03, 0.34, 8), '#fffaf0', x, 0.28, 0.27));
+    g.add(m(box(0.72, 0.04, 0.12), '#fffaf0', 0, 0.47, 0.27));
+    return g;
+  },
+  grandhatchery() {
+    const g = group(
+      m(box(0.86, 0.04, 0.86), '#d8d2c4', 0, 0.02, 0, { shadow: false }),
+      m(cyl(0.38, 0.4, 0.1, 16), '#a0785a', 0, 0.09, 0),
+      m(torus(0.3, 0.06), '#7a5230', 0, 0.16, 0, { rx: Math.PI / 2 }),
+      m(sphere(0.26, 14, 10), '#fff6e0', 0, 0.5, 0, { s: [1, 1.35, 1] }),
+      m(sphere(0.06, 6, 5), '#ff8fb1', -0.1, 0.62, 0.2),
+      m(sphere(0.05, 6, 5), '#7fd1ff', 0.12, 0.45, 0.22),
+      m(sphere(0.05, 6, 5), '#ffd23f', 0.0, 0.76, 0.17),
+      m(cone(0.09, 0.14, 5), '#ffd23f', 0, 0.97, 0),
+    );
+    [[-0.3, 0.26], [0.3, 0.28], [0.0, -0.36]].forEach(([x, z], i) => g.add(m(sphere(0.07, 8, 6), ['#ffd1dc', '#c8f0d0', '#d9d0ff'][i], x, 0.17, z, { s: [1, 1.25, 1] })));
+    return g;
+  },
 };
 
 const PIP_GEO = new THREE.OctahedronGeometry(0.035);

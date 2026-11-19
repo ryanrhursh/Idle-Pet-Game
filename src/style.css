@@ -47,6 +47,20 @@ html, body {
   pointer-events: none;
   z-index: 5;
 }
+#goal {
+  position: fixed;
+  top: calc(var(--hud-top) + var(--hud-h, 40px) + 6px);
+  left: 50%; transform: translateX(-50%);
+  z-index: 5; max-width: 94vw;
+}
+#goal[hidden] { display: none; }
+.goal-pill {
+  appearance: none; border: 0; font: inherit; font-size: 13px; font-weight: 700; color: var(--ink);
+  background: var(--panel); border-radius: 999px; padding: 5px 12px; box-shadow: var(--shadow);
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 94vw;
+}
+.goal-pill small { color: var(--muted); font-weight: 600; }
+.goal-pill.ready { background: var(--accent); color: var(--accent-ink); animation: pulse 1.2s infinite; }
 .res {
   display: flex; align-items: center; gap: 4px;
   background: var(--panel);
@@ -82,7 +96,10 @@ html, body {
   font: inherit; font-size: 11px; font-weight: 600;
   padding: 4px 10px; border-radius: 14px; min-width: 58px; cursor: pointer;
 }
+#tabs button { position: relative; }
 #tabs button span { font-size: 22px; line-height: 1.2; }
+#tabs .dot { position: absolute; top: 2px; right: 8px; width: 11px; height: 11px; border-radius: 50%; background: #ff3d6e; border: 2px solid var(--panel); }
+#tabs .dot[hidden] { display: none; }
 #tabs button.active { background: var(--accent); color: var(--accent-ink); }
 
 /* ---------- sheet (bottom on phones, side panel on wide screens) ---------- */
@@ -205,9 +222,18 @@ label select { margin: 0; }
 .dex-cell.unknown { opacity: 0.6; border-style: dashed; }
 .dex-cell .q { width: 64px; height: 64px; margin: 0 auto; display: grid; place-items: center; font-size: 34px; font-weight: 800; color: var(--rc); }
 
+/* ---------- goals ---------- */
+.quest { display: flex; gap: 10px; align-items: center; padding: 10px; margin: 6px 0; background: #fff; border: 1px solid var(--line); border-radius: 14px; }
+.quest.ready { border-color: var(--accent); background: #fff4ee; }
+.quest .q-icon { font-size: 28px; width: 40px; text-align: center; flex: none; }
+.quest b { display: block; }
+.quest small { display: block; color: var(--muted); font-size: 12px; }
+.quest small.reward { color: var(--ink); font-weight: 700; margin-top: 2px; }
+.quest .bar.wide { margin: 4px 0 1px; height: 8px; }
+
 /* ---------- toasts / banner / modal ---------- */
 #toasts {
-  position: fixed; top: calc(var(--hud-top) + 48px); left: 50%; transform: translateX(-50%);
+  position: fixed; top: calc(var(--hud-top) + var(--hud-h, 40px) + 44px); left: 50%; transform: translateX(-50%);
   display: flex; flex-direction: column; gap: 6px; align-items: center;
   z-index: 7; pointer-events: none; width: min(92vw, 420px);
 }

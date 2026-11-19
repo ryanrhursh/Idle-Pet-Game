@@ -21,6 +21,7 @@ export function createNewGame(rng = Math.random) {
     starving: false,
     settings: { autoAssign: true },
     stats: { hatched: 0, strays: 0, coinsEarned: 0 },
+    quests: { claimed: {} },
     log: [],
     events: [],
     savedAt: Date.now(),
@@ -61,6 +62,9 @@ export function loadGame(storage = globalThis.localStorage, now = Date.now()) {
   if (state.version !== SAVE_VERSION) return { state: createNewGame(), offline: null };
   state.events = [];
   state.settings = { autoAssign: true, ...state.settings };
+  // saves from older versions of the game: fill in anything added since
+  state.stats = { hatched: 0, strays: 0, coinsEarned: 0, ...state.stats };
+  state.quests = { claimed: {}, ...state.quests };
   const away = Math.max(0, (now - (state.savedAt || now)) / 1000);
   let offline = null;
   if (away > 30) {

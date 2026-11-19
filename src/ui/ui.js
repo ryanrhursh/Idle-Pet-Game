@@ -2,7 +2,7 @@
 // Views are re-rendered from state; buttons carry data-act attributes that
 // are dispatched to the action handlers passed in from main.js.
 
-import { BUILDINGS, CONFIG, EGGS, RARITIES, RESOURCES, SPECIES, TRAITS, xpForLevel } from '../game/data.js';
+import { BUILDINGS, CONFIG, EGGS, RARITIES, RESOURCES, SOCIAL, SPECIES, TRAITS, xpForLevel } from '../game/data.js';
 import {
   buildCost, buildingAt, canAfford, collectionMul, eggCost, expandCost, getBuilding, getPet, happinessFactors,
   homeCapacity, jobSlots, maxLevelOf, netRates, outputMul, residentsOf, totalHousing, upgradeCost, workersOf, workerMul,
@@ -12,6 +12,9 @@ import { QUESTS, claimable, questProgress, questSummary, rewardText, upcoming } 
 import { readyRequests, requestIcon, requestStatus, requestText } from '../game/requests.js';
 import { featuredChance, featuredEndsAt, featuredSpecies } from '../game/featured.js';
 import { fmt } from '../game/util.js';
+import {
+  bestPairs, couples, familyTree, findAnyPet, likesText, maxGeneration, relationshipsOf,
+} from '../game/social.js';
 import { daylight } from '../render/stage.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -104,7 +107,7 @@ export class UI {
     this.params = params;
     this.sheet.hidden = false;
     this.sheet.classList.remove('closing');
-    document.querySelectorAll('#tabs [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === view || (view === 'pet' && b.dataset.tab === 'pets') || (view === 'building' && b.dataset.tab === 'build')));
+    document.querySelectorAll('#tabs [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === view || ((view === 'pet' || view === 'tree') && b.dataset.tab === 'pets') || (view === 'building' && b.dataset.tab === 'build')));
     this.sheetBody.scrollTop = 0;
     this.render();
   }
@@ -132,6 +135,7 @@ export class UI {
       building: () => this.viewBuilding(s),
       pets: () => this.viewPets(s),
       pet: () => this.viewPet(s),
+      tree: () => this.viewTree(s),
       hatch: () => this.viewHatch(s),
       goals: () => this.viewGoals(s),
       dex: () => this.viewDex(s),
@@ -198,7 +202,7 @@ export class UI {
     const sp = SPECIES[p.species];
     return `<div class="pet-row" data-act="openPet" data-id="${p.id}">
       <img src="${this.petImg(p.species, p.shiny)}" alt="">
-      <div class="grow"><b>${p.shiny ? '✨ ' : ''}${esc(p.name)}</b> <small style="color:${RARITIES[sp.rarity].color}">${sp.name} · Lv ${p.level}</small></div>
+      <div class="grow"><b>${p.shiny ? '✨ ' : ''}${esc(p.name)}${p.kid ? ' 👶' : ''}${p.partnerId != null ? ' 💞' : ''}</b> <small style="color:${RARITIES[sp.rarity].color}">${sp.name} · Lv ${p.level}</small></div>
       <span class="mood">${mood(p.happiness)}</span>${extra}
     </div>`;
   }
@@ -287,6 +291,41 @@ export class UI {
     return { title: '🐾 Citizens', body };
   }
 
+  // "💞 Relationships": partner, family, friends and rivals. Pets in town can be opened with a tap.
+  relationshipsHtml(s, p) {
+    const r = relationshipsOf(s, p);
+    const row = (e, label, icon) => `<div class="rel ${e.inTown ? '' : 'away'}" ${e.inTown ? `data-act="openPet" data-id="${e.pet.id}"` : ''}>
+      <img src="${this.petImg(e.pet.species, e.pet.shiny)}" alt="">
+      <div class="grow"><b>${e.pet.shiny ? '✨ ' : ''}${esc(e.pet.name)}${e.pet.kid ? ' 👶' : ''}</b><small>${label}${e.inTown ? '' : ' · 🌼 in the Meadow'}</small></div>
+      <span>${icon}</span></div>`;
+    const some = (list, label, icon, max = 4) => list.slice(0, max).map((e) => row(e, label, icon)).join('') + (list.length > max ? `<p class="hint">+${list.length - max} more ${label.toLowerCase()}s</p>` : '');
+    let rows = '';
+    if (r.partner) rows += row(r.partner, 'Partner', '💞');
+    rows += some(r.parents, 'Parent', '🧡') + some(r.children, 'Child', '🧡') + some(r.siblings, 'Sibling', '🧡');
+    rows += some(r.best, 'Best friend', '💖') + some(r.friends, 'Friend', '💛') + some(r.rivals, 'Rival', '💢');
+    if (!rows) return `<h3>💞 Relationships</h3><p class="hint">No close bonds yet. Pets who share a home or a workplace get to know each other, faster when their traits match.</p>`;
+    const rivalHint = r.rivals.some((e) => e.inTown) ? '<p class="hint">💢 Rivals sharing a home or job make each other grumpy. Move one of them to a different home or job.</p>' : '';
+    return `<h3>💞 Relationships</h3><div class="rels">${rows}</div>${rivalHint}`;
+  }
+
+  viewTree(s) {
+    const p = findAnyPet(s, this.params.id);
+    if (!p) return null;
+    const t = familyTree(s, p);
+    const inTown = (q) => s.pets.some((x) => x.id === q.id);
+    const cell = (q, cls = '') => `<button class="tcell ${cls}" data-act="openTree" data-id="${q.id}">
+      <img src="${this.petImg(q.species, q.shiny)}" alt=""><b>${q.shiny ? '✨ ' : ''}${esc(q.name)}${q.kid ? ' 👶' : ''}</b><small>Gen ${q.gen || 1}${inTown(q) ? '' : ' · 🌼'}</small></button>`;
+    const row = (title, list) => (list.length ? `<h3>${title}</h3><div class="trow">${list.map((q) => cell(q)).join('')}</div>` : '');
+    let body = `<p class="hint">Tap anyone to see their branch.</p>` + row('Grandparents', t.grandparents) + row('Parents', t.parents);
+    body += `<h3>${esc(p.name)}</h3><div class="trow">${cell(p, 'me')}${t.partner ? `<span class="heart">💞</span>${cell(t.partner)}` : ''}</div>`;
+    const branch = (n) => `<li>${cell(n.pet)}${n.children.length ? `<ul>${n.children.map(branch).join('')}</ul>` : ''}</li>`;
+    body += t.descendants.length
+      ? `<h3>Children and grandchildren</h3><ul class="tree">${t.descendants.map(branch).join('')}</ul>`
+      : `<p class="hint">No children yet. Partners with a free bed, enough food and good moods start families.</p>`;
+    body += `<div class="row">${inTown(p) ? `<button class="btn" data-act="openPet" data-id="${p.id}">← ${esc(p.name)}</button>` : `<button class="btn" data-act="tab" data-tab="pets">← Pets</button>`}</div>`;
+    return { title: `🌳 ${esc(p.name)}'s family`, body };
+  }
+
   viewPet(s) {
     const p = getPet(s, this.params.id);
     if (!p) return null;
@@ -298,6 +337,7 @@ export class UI {
     const factors = happinessFactors(s, p).map(([k, v]) => `<li><span>${k}</span><b class="${v >= 0 ? 'pos' : 'neg'}">${v >= 0 ? '+' : ''}${v}</b></li>`).join('');
     const homes = s.buildings.filter((b) => BUILDINGS[b.type].type === 'home');
     const jobs = s.buildings.filter((b) => BUILDINGS[b.type].type === 'job');
+    const likes = likesText(p.trait);
     const homeOpts = homes.map((b) => {
       const full = residentsOf(s, b.id).length >= homeCapacity(b) && p.homeId !== b.id;
       return `<option value="${b.id}" ${p.homeId === b.id ? 'selected' : ''} ${full ? 'disabled' : ''}>${BUILDINGS[b.type].emoji} ${BUILDINGS[b.type].name} (${residentsOf(s, b.id).length}/${homeCapacity(b)})</option>`;
@@ -314,17 +354,22 @@ export class UI {
           <p>Level ${p.level}${p.level < CONFIG.maxPetLevel ? ` <span class="bar"><i style="width:${Math.min(100, (p.xp / need) * 100)}%"></i></span>` : ' (max)'}</p>
           <p>Trait: <b>${trait.name}</b> <small>${trait.desc}</small></p>
           <p>Dream job: ${fav.emoji} ${fav.name}</p>
+          ${p.kid ? `<p>👶 <b>Kid</b> <small>grows up in ${fmtDuration(Math.max(1, SOCIAL.kidSeconds - (s.time - (p.born || 0))))} of game time and can't work yet</small></p>` : ''}
+          ${(p.gen || 1) > 1 ? `<p><small>Generation ${p.gen}</small></p>` : ''}
         </div>
       </div>
+      <p class="likes">💕 Gets on with: ${likes.warm ? 'everyone' : ''}${likes.warm && likes.likes ? ', especially ' : ''}${likes.likes || (likes.warm ? '' : 'nobody in particular')}${likes.clash ? ` · 💢 Clashes with: ${likes.clash}` : ''}</p>
       <h3>${mood(p.happiness)} Happiness ${Math.round(p.happiness)}%</h3>
       <div class="bar wide"><i style="width:${p.happiness}%"></i></div>
       <ul class="factors">${factors}</ul>
       <p class="hint">Happier pets work faster (up to 1.5×).</p>
+      ${this.relationshipsHtml(s, p)}
       <label>Home <select data-act="setHome" data-id="${p.id}"><option value="">🏚️ No home</option>${homeOpts}</select></label>
       <label>Job <select data-act="setJob" data-id="${p.id}"><option value="">💤 No job</option>${jobOpts}</select></label>
       <div class="row">
         <button class="btn" data-act="rename" data-id="${p.id}">✏️ Rename</button>
         <button class="btn" data-act="findPet" data-id="${p.id}">📍 Find in town</button>
+        <button class="btn" data-act="openTree" data-id="${p.id}">🌳 Family tree</button>
         <button class="btn" data-act="retire" data-id="${p.id}">🌼 Send to the Meadow</button>
         <button class="btn" data-act="tab" data-tab="pets">← All pets</button>
       </div>`;
@@ -442,6 +487,7 @@ export class UI {
         <li>Free beds attract stray pets. Treats 🍬 hatch eggs for rarer pets.</li>
         <li>Check the 🎯 Goals tab for what to do next. Finishing goals pays rewards.</li>
         <li>Neighbours post 📮 <b>Town requests</b> in the Goals tab: hand over what they ask for, or build, hatch or expand, to earn rewards. Swap any you don't like with ↻.</li>
+        <li>Pets who share a home or a job become friends or rivals on their own (check what each trait likes on a pet's page). Best friends can become 💞 partners and have 👶 babies, who grow into workers. See every pet's 🌳 family tree.</li>
         <li>Town full? Open a pet and tap <b>Send to the Meadow</b>: it frees a spot, and you can bring the pet back later while there's room.</li>
         <li>About 1 egg in 30 hatches a ✨ <b>shiny</b> pet (+15% output). Each week one species is the ⭐ featured egg in the Hatch tab.</li>
         <li>Spend big on upgrades, more land and one-of-a-kind wonders. They boost the whole town.</li>
@@ -454,6 +500,8 @@ export class UI {
         <li><span>Day</span><b>${days}</b></li>
         <li><span>Citizens</span><b>${s.pets.length}</b></li>
         <li><span>Goals done</span><b>${questSummary(s).done}/${QUESTS.length}${questSummary(s).endless ? ` +${questSummary(s).endless}♾️` : ''}</b></li>
+        <li><span>Best-friend pairs / couples</span><b>${bestPairs(s)} / ${couples(s)}</b></li>
+        <li><span>Babies born · deepest generation</span><b>${s.stats.born || 0} · ${maxGeneration(s)}</b></li>
         <li><span>Pets in the Meadow</span><b>${(s.meadow || []).length}</b></li>
         <li><span>Town requests done</span><b>${s.requests.done}</b></li>
         <li><span>Shiny species found</span><b>${Object.keys(s.shinyFound || {}).length}/${Object.keys(SPECIES).length}</b></li>

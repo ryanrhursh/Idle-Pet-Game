@@ -10,6 +10,7 @@
 import { BUILDINGS, CONFIG, EGGS, RESOURCES, SPECIES } from './data.js';
 import { emit, hatch, maxLevelOf } from './sim.js';
 import { fmt, nice } from './util.js';
+import { bestPairs, couples, friendPairs, maxGeneration } from './social.js';
 
 const coinsEarned = (s) => s.stats.coinsEarned;
 const owns = (type) => (s) => s.buildings.filter((b) => b.type === type).length;
@@ -39,6 +40,7 @@ const LIST = [
   ['garden', '🌷', 'Pretty town', 'Build a Flower Garden to cheer everyone up.', 1, owns('garden'), { wood: 120, treats: 5 }],
   ['upgrade2', '⬆️', 'Level up!', 'Upgrade any building to level 2.', 2, topBuildingLevel, { coins: 150, treats: 8 }],
   // ---- chapter 2: growing ----
+  ['friend1', '🤝', 'Better together', 'Two pets who share a home or a job become friends. Chemistry matters: check what each trait likes on a pet\'s page.', 1, (s) => friendPairs(s), { coins: 300, treats: 8 }],
   ['pets8', '🐶', 'Small town', 'Have 8 citizens.', 8, pets, { coins: 250, wood: 150, treats: 10 }],
   ['dex4', '📖', 'Collector', 'Discover 4 different species.', 4, found, { treats: 12 }],
   ['earn1k', '🪙', 'Pocket money', 'Earn 1,000 coins in total.', 1000, coinsEarned, { wood: 300, treats: 8 }],
@@ -48,6 +50,7 @@ const LIST = [
   ['mood80', '😄', 'Happy town', 'With at least 6 citizens, get the average mood up to 80%.', 80, averageMood, { coins: 400, treats: 10 }],
   ['petlv5', '⭐', 'Rising star', 'Get a pet to level 5.', 5, topPetLevel, { treats: 10 }],
   // ---- chapter 3: thriving ----
+  ['best1', '💖', 'Best buddies', 'Get a pair of best friends.', 1, (s) => bestPairs(s), { coins: 1500, treats: 15 }],
   ['pets15', '🏘️', 'Busy streets', 'Have 15 citizens.', 15, pets, { coins: 1500, wood: 1000, basic: 1 }],
   ['dex8', '🔎', 'Pet scout', 'Discover 8 different species.', 8, found, { golden: 1 }],
   ['upgrade4', '🔨', 'Craftsmanship', 'Upgrade any building to level 4.', 4, topBuildingLevel, { coins: 1500, wood: 1000, treats: 15 }],
@@ -57,6 +60,8 @@ const LIST = [
   ['petlv10', '🌟', 'Seasoned worker', 'Get a pet to level 10.', 10, topPetLevel, { golden: 1 }],
   ['strays5', '🧳', 'Open door', 'Welcome 5 stray pets into town.', 5, (s) => s.stats.strays, { coins: 1000, food: 500, basic: 1 }],
   // ---- chapter 4: wonders ----
+  ['partner1', '💞', 'Love is in the air', 'Two best friends become partners.', 1, (s) => couples(s), { golden: 1 }],
+  ['baby1', '👶', 'A new arrival', 'A couple welcomes a baby. They need a free bed, food and good moods.', 1, (s) => s.stats.born || 0, { golden: 2 }],
   ['pets25', '🌆', 'Real city', 'Have 25 citizens.', 25, pets, { coins: 6000, wood: 4000, golden: 1 }],
   ['dex12', '📚', 'Pet expert', 'Discover 12 different species.', 12, found, { golden: 2 }],
   ['upgrade6', '🏗️', 'Master builder', 'Upgrade any building to level 6.', 6, topBuildingLevel, { coins: 8000, wood: 5000, golden: 1 }],
@@ -68,6 +73,8 @@ const LIST = [
   ['hatch30', '🪺', 'Nest builder', 'Hatch 30 eggs.', 30, (s) => s.stats.hatched, { coins: 10000, food: 5000, golden: 2 }],
   ['shiny1', '✨', 'Something sparkly', 'Hatch a shiny pet. About 1 egg in 30 holds one (a bit better in Golden Eggs).', 1, shinySpecies, { golden: 2 }],
   // ---- chapter 5: legends ----
+  ['couples5', '💒', 'Matchmaker', 'Have 5 couples in town.', 5, (s) => couples(s), { coins: 20000, wood: 12000, golden: 3 }],
+  ['gen3', '🌳', 'Three generations', 'A grandchild is born: three generations in one family tree.', 3, (s) => maxGeneration(s), { golden: 4 }],
   ['pets50', '🏙️', 'Metropolis', 'Have 50 citizens.', 50, pets, { coins: 40000, wood: 25000, golden: 3 }],
   ['dex16', '🧭', 'Pet master', 'Discover 16 different species.', 16, found, { golden: 3 }],
   ['petlv20', '🎖️', 'Grandmaster', 'Get a pet to level 20.', 20, topPetLevel, { golden: 3 }],
@@ -81,6 +88,7 @@ const LIST = [
   ['shiny3', '💫', 'Shiny collector', 'Find 3 different shiny species.', 3, shinySpecies, { coins: 300000, golden: 5 }],
   ['shiny5', '🌠', 'Shiny hunter', 'Find 5 different shiny species. Retire pets to the Meadow to make room for more eggs.', 5, shinySpecies, { coins: 600000, golden: 6 }],
   // ---- chapter 6: the long game ----
+  ['gen5', '🏛️', 'Family dynasty', 'Reach the fifth generation of a family.', 5, (s) => maxGeneration(s), { coins: 200000, golden: 6 }],
   ['pets100', '🌇', 'Packed to the rafters', `Have ${CONFIG.maxPets} citizens (the town limit).`, CONFIG.maxPets, pets, { coins: 500000, wood: 300000, golden: 5 }],
   ['upgrade10', '👑', 'Pinnacle', 'Upgrade any building to level 10 (max).', 10, topBuildingLevel, { coins: 400000, wood: 250000, golden: 5 }],
   ['petlv25', '🥇', 'Living legend', 'Get a pet to the max level (25).', 25, topPetLevel, { golden: 5 }],
@@ -143,6 +151,20 @@ export const ENDLESS = [
     goal: (t) => grow(4, 1.7, t),
     desc: (g) => `Hatch ${fmt(g)} shiny pets in total (they can be the same species).`,
     reward: (t, g) => ({ coins: nice(g * 20000), treats: nice(g * 50), golden: eggs(2, 8)(t) }),
+  },
+  {
+    kind: 'born', icon: '👶', after: 'baby1', progress: (s) => s.stats.born || 0,
+    names: ['Baby boom', 'Crowded cradles', 'Nursery town', 'Pitter-patter'],
+    goal: (t) => grow(5, 2, t),
+    desc: (g) => `Welcome ${fmt(g)} babies in total.`,
+    reward: (t, g) => ({ treats: nice(g * 20), coins: nice(g * 30000), golden: eggs(1, 8)(t) }),
+  },
+  {
+    kind: 'gens', icon: '🌳', after: 'gen5', progress: (s) => maxGeneration(s),
+    names: ['Roots and branches', 'Ancient lineage', 'Family forest', 'Legacy'],
+    goal: (t) => 5 + 2 * t,
+    desc: (g) => `Raise a family ${fmt(g)} generations deep.`,
+    reward: (t, g) => ({ coins: g * 50000, treats: g * 40, golden: eggs(2, 8)(t) }), // linear goal, so no rounding (it would make neighbouring tiers equal)
   },
   {
     kind: 'requests', icon: '📮', after: 'pets8', progress: (s) => (s.requests ? s.requests.done : 0),

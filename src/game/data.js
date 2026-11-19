@@ -40,15 +40,31 @@ export const SPECIES = {
 };
 
 // Every pet gets one random trait.
+// likes / clash: which traits this one gets on with (+1 chemistry) or rubs up the wrong way (-1). warm: friendly
+// with everybody (+1). Chemistry decides how fast two pets who share a home or a job become friends (or rivals).
 export const TRAITS = {
-  hardworking: { name: 'Hard Worker', desc: '+25% output', output: 1.25 },
-  sleepy: { name: 'Sleepy', desc: '-15% output, +10 happiness', output: 0.85, happy: 10 },
-  cheerful: { name: 'Cheerful', desc: '+15 happiness', happy: 15 },
-  bigEater: { name: 'Big Eater', desc: 'Eats 80% more, +10% output', food: 1.8, output: 1.1 },
-  nibbler: { name: 'Nibbler', desc: 'Eats 40% less', food: 0.6 },
-  quick: { name: 'Quick Learner', desc: '+60% XP', xp: 1.6 },
-  homebody: { name: 'Homebody', desc: 'Loves having a home (+15), hates not having one (-20)', homeBonus: 15, homelessPenalty: 20 },
-  social: { name: 'Social', desc: '+7% output per coworker (max +21%)', social: 0.07 },
+  hardworking: { name: 'Hard Worker', desc: '+25% output', output: 1.25, likes: ['hardworking', 'quick'], clash: ['sleepy'] },
+  sleepy: { name: 'Sleepy', desc: '-15% output, +10 happiness', output: 0.85, happy: 10, likes: ['sleepy', 'homebody'], clash: ['hardworking', 'quick'] },
+  cheerful: { name: 'Cheerful', desc: '+15 happiness', happy: 15, warm: true, likes: ['sleepy'], clash: [] },
+  bigEater: { name: 'Big Eater', desc: 'Eats 80% more, +10% output', food: 1.8, output: 1.1, likes: ['bigEater', 'nibbler'], clash: [] },
+  nibbler: { name: 'Nibbler', desc: 'Eats 40% less', food: 0.6, likes: ['nibbler', 'bigEater'], clash: [] },
+  quick: { name: 'Quick Learner', desc: '+60% XP', xp: 1.6, likes: ['quick', 'hardworking', 'social'], clash: ['sleepy'] },
+  homebody: { name: 'Homebody', desc: 'Loves having a home (+15), hates not having one (-20)', homeBonus: 15, homelessPenalty: 20, likes: ['homebody', 'sleepy'], clash: ['social'] },
+  social: { name: 'Social', desc: '+7% output per coworker (max +21%)', social: 0.07, warm: true, likes: ['social', 'cheerful', 'quick'], clash: ['homebody'] },
+};
+
+// Friendships, partners and families (see social.js). Bonds run from -100 (rivals) to 100.
+export const SOCIAL = {
+  step: 5, // seconds between social updates
+  rate: 0.04, // bond points per second per chemistry step (so a good pair are friends within a few game days)
+  decay: 0.01, // points per second lost between pets who are apart
+  friend: 25, best: 60, partner: 75, rival: -40, // bond levels
+  kidSeconds: 270, // 3 game days of childhood: no job, eats half, can't have a partner
+  birthCooldown: 900, // 10 game days between babies of one couple
+  maxKids: 3, // per couple
+  birthChance: 0.2, // per update once a couple is ready
+  kidScale: 0.62, // size of a kid in the 3D town
+  workPerFriend: 0.02, workPerBest: 0.03, workPerRival: -0.05, // output change per coworker (up to 3 of each)
 };
 
 // type: home | job | decor | wonder

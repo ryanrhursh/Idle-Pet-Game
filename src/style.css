@@ -306,3 +306,24 @@ h3 small.hint { font-weight: 600; margin-left: 4px; }
 
 .pet-row.static { cursor: default; }
 .pet-row.static:hover { background: none; }
+
+/* ---- v0.6: relationships and family trees ---- */
+.likes { font-size: 13px; color: var(--muted); margin: 6px 0; }
+.rels { display: grid; gap: 2px; }
+.rel { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 12px; cursor: pointer; }
+.rel:hover { background: rgba(0, 0, 0, 0.04); }
+.rel.away { cursor: default; opacity: 0.7; }
+.rel img { width: 34px; height: 34px; }
+.rel b { display: block; }
+.rel small { color: var(--muted); font-size: 12px; }
+.trow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.heart { font-size: 22px; }
+.tcell { appearance: none; border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 14px; padding: 6px 8px; font: inherit; display: grid; justify-items: center; min-width: 84px; cursor: pointer; }
+.tcell img { width: 44px; height: 44px; }
+.tcell b { font-size: 13px; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tcell small { color: var(--muted); font-size: 11px; }
+.tcell.me { border: 2px solid var(--accent); background: #fff4ee; }
+ul.tree, ul.tree ul { list-style: none; margin: 0; padding-left: 14px; }
+ul.tree ul { margin-left: 18px; border-left: 2px solid var(--line); }
+ul.tree li { margin: 6px 0; position: relative; }
+ul.tree ul > li::before { content: ""; position: absolute; left: -14px; top: 28px; width: 12px; border-top: 2px solid var(--line); }

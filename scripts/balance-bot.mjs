@@ -13,6 +13,7 @@ const data = await import(pathToFileURL(root + '/src/game/data.js'));
 const rq = await import(pathToFileURL(root + '/src/game/requests.js'));
 const qs = await import(pathToFileURL(root + '/src/game/quests.js'));
 const { fmt } = await import(pathToFileURL(root + '/src/game/util.js'));
+const so = await import(pathToFileURL(root + '/src/game/social.js'));
 const { BUILDINGS, CONFIG, EGGS } = data;
 let seed = 7; const rng = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
 const s = st.createNewGame(rng);
@@ -85,6 +86,13 @@ function describeRequests() {
     return `${t} -> ${qs.rewardText(r.reward)}`;
   }).join(' | ');
 }
+// MEADOW=1: when the town is full the bot sends its weakest grown-up (never a partner) to the Meadow, so
+// babies and eggs always have room. Shows how families grow when a player keeps making space.
+function makeRoom() {
+  if (!process.env.MEADOW || s.pets.length < CONFIG.maxPets - 1) return;
+  const pick = s.pets.filter((p) => !p.kid && p.partnerId == null && !p.shiny).sort((a, b) => a.level - b.level)[0];
+  if (pick) sim.retirePet(s, pick.id);
+}
 function step() {
   const net = sim.netRates(s);
   // 1 food safety
@@ -135,11 +143,14 @@ while (next < checkpoints.length) {
   t += 15;
   for (let k = 0; k < 6; k++) step();
   serveRequests();
+  makeRoom();
   if (s.time / DAY >= checkpoints[next]) {
     const lv = s.buildings.reduce((a, b) => a + b.level, 0);
     const net = sim.netRates(s);
     rows.push(`day ${String(checkpoints[next]).padStart(3)} | pets ${String(s.pets.length).padStart(3)} bld ${String(s.buildings.length).padStart(3)} lvls ${String(lv).padStart(4)} rows ${s.rows} | coins ${Math.round(s.resources.coins)} wood ${Math.round(s.resources.wood)} food ${Math.round(s.resources.food)} treats ${Math.round(s.resources.treats)} | net c ${net.coins.toFixed(1)} w ${net.wood.toFixed(1)} f ${net.food.toFixed(1)} t ${net.treats.toFixed(2)} | hatched ${s.stats.hatched} strays ${s.stats.strays} | earned ${Math.round(s.stats.coinsEarned)} disc ${Object.keys(s.discovered).length}`);
     rows.push(`          requests: finished ${rstats.done} (${Object.entries(rstats.byType).map(([k, v]) => k + ' ' + v).join(', ')}), skipped ${rstats.skipped}, net paid ${JSON.stringify(Object.fromEntries(Object.entries(rstats.paid).map(([k, v]) => [k, Math.round(v)])))}, open: ${describeRequests()}`);
+    const kids = s.pets.filter((p) => p.kid).length;
+    rows.push(`          social: friend pairs ${so.friendPairs(s)}, best pairs ${so.bestPairs(s)}, couples ${so.couples(s)}, born ${s.stats.born}, kids now ${kids}, deepest generation ${so.maxGeneration(s)}`);
     rows.push(`          goals: ${Object.keys(s.quests.claimed).length} claimed, shinies found ${Object.keys(s.shinyFound).length}, next endless: ${qs.currentEndless(s).map((q) => q.id).join(' ')}`);
     next++;
   }
